@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Blank Page"
+version = "1.0.0"
+id = "artifacts/blank-app"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22399
+
+[services.development]
+run = "pnpm --filter @workspace/blank-app run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/blank-app", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/blank-app/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22399"
+BASE_PATH = "/"
