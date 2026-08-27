@@ -10,6 +10,10 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: products
+    description: Product operations
+  - name: ingredients
+    description: Ingredient / inventory operations
 paths:
   /healthz:
     get:
@@ -24,6 +28,101 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /products:
+    get:
+      operationId: listProducts
+      tags: [products]
+      summary: List products
+      responses:
+        "200":
+          description: List of products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Create a product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProduct"
+      responses:
+        "201":
+          description: Created product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+
+  /products/{code}:
+    delete:
+      operationId: deleteProduct
+      tags: [products]
+      summary: Delete a product
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /ingredients:
+    get:
+      operationId: listIngredients
+      tags: [ingredients]
+      summary: List ingredients
+      responses:
+        "200":
+          description: List of ingredients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ingredient"
+    post:
+      operationId: createIngredient
+      tags: [ingredients]
+      summary: Create or restock an ingredient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIngredient"
+      responses:
+        "201":
+          description: Created/updated ingredient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ingredient"
+
+  /ingredients/{code}:
+    delete:
+      operationId: deleteIngredient
+      tags: [ingredients]
+      summary: Delete an ingredient
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +133,75 @@ components:
       required:
         - status
 
+    Product:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        price:
+          type: number
+        cost:
+          type: number
+      required:
+        - code
+        - name
+        - price
+        - cost
+
+    CreateProduct:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        price:
+          type: number
+        cost:
+          type: number
+      required:
+        - code
+        - name
+        - price
+        - cost
+
+    Ingredient:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        unit:
+          type: string
+        stock:
+          type: number
+        minimum:
+          type: number
+      required:
+        - code
+        - name
+        - unit
+        - stock
+        - minimum
+
+    CreateIngredient:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        unit:
+          type: string
+        stock:
+          type: number
+        minimum:
+          type: number
+      required:
+        - code
+        - name
+        - unit
+        - stock

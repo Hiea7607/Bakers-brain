@@ -16,5 +16,5 @@
 //   export const insertPostSchema = createInsertSchema(postsTable).omit({ id: true });
 //   export type InsertPost = z.infer<typeof insertPostSchema>;
 //   export type Post = typeof postsTable.$inferSelect;
-
-export {}
+export * from "./products";
+export * from "./ingredients";
