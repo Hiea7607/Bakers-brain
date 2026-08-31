@@ -108,10 +108,8 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                   )}
 
                   <button
-                    onClick={() => {
-                      if (window.confirm(`Delete order ${order.id}?`)) deleteOrder(order.id);
-                    }}
-                    className="text-red-400 hover:text-red-600 text-xs"
+                    onClick={() => deleteOrder(order.id)}
+                    className="text-red-400 hover:text-red-600 text-xs font-bold"
                   >
                     Delete
                   </button>

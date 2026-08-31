@@ -81,13 +81,13 @@ function BakersBrainApp() {
 
               <nav className="mt-4 space-y-1">
                 {[
-                  { id: "dashboard", label: "Dashboard", icon: "📊" },
+                  { id: "dashboard", label: "Dashboard", icon: "🏠" },
                   { id: "neworder", label: "New Order (Quick)", icon: "⚡" },
                   { id: "orders", label: "Orders Manager", icon: "📦" },
                   { id: "products", label: "Products Catalog", icon: "🎂" },
                   { id: "inventory", label: "Raw Ingredients", icon: "🥣" },
                   { id: "purchases", label: "Purchase History", icon: "🧾" },
-                  { id: "reports", label: "Reports & Analytics", icon: "📈" },
+                  { id: "reports", label: "Reports & Analytics", icon: "📊" },
                 ].map((item) => (
                   <button
                     key={item.id}
