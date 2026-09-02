@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db, ingredientsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import type { CreateIngredient, Ingredient } from "@workspace/api-zod";
+import { CreateIngredient, Ingredient } from "@workspace/api-zod";
 
 const router: IRouter = Router();
 
