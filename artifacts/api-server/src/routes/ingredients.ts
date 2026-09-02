@@ -1,18 +1,17 @@
 import { Router, type IRouter } from "express";
 import { db, ingredientsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { CreateIngredient, Ingredient } from "@workspace/api-zod";
+import type { CreateIngredient } from "@workspace/api-zod";
 
 const router: IRouter = Router();
 
 router.get("/ingredients", async (_req, res) => {
   const rows = await db.select().from(ingredientsTable);
-  const data = rows.map((row) => Ingredient.parse(row));
-  res.json(data);
+  res.json(rows);
 });
 
 router.post("/ingredients", async (req, res) => {
-  const body = CreateIngredient.parse(req.body);
+  const body = req.body as CreateIngredient;
 
   const [row] = await db
     .insert(ingredientsTable)
@@ -25,8 +24,7 @@ router.post("/ingredients", async (req, res) => {
     })
     .returning();
 
-  const data = Ingredient.parse(row);
-  res.status(201).json(data);
+  res.status(201).json(row);
 });
 
 router.delete("/ingredients/:code", async (req, res) => {
