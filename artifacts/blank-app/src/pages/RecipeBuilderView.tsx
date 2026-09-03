@@ -5,13 +5,20 @@ export const RecipeBuilderView: React.FC<{ productCode: string; onBack: () => vo
   productCode,
   onBack,
 }) => {
-  const { products, inventory, recipes, addOrUpdateRecipeIngredient, removeRecipeIngredient } = useBakery();
+  const context = useBakery() as any;
+  const products = context.products ?? [];
+  const inventory = context.inventory ?? [];
+  const recipes: Record<string, Record<string, number>> = context.recipes ?? {};
+  const addOrUpdateRecipeIngredient =
+    context.addOrUpdateRecipeIngredient ?? context.attachRecipeItem ?? (() => {});
+  const removeRecipeIngredient = context.removeRecipeIngredient ?? (() => {});
+
   const [selectedIngCode, setSelectedIngCode] = useState("");
   const [selectedIngQty, setSelectedIngQty] = useState("");
 
-  const product = products.find((p) => p.code === productCode);
+  const product = products.find((p: any) => p.code === productCode);
   const recipe = recipes[productCode] || {};
-  const recipeEntries = Object.entries(recipe);
+  const recipeEntries = Object.entries(recipe) as [string, number][];
 
   const handleAdd = () => {
     if (!selectedIngCode || !selectedIngQty || Number(selectedIngQty) <= 0) {
@@ -43,7 +50,7 @@ export const RecipeBuilderView: React.FC<{ productCode: string; onBack: () => vo
         ) : (
           <div className="divide-y divide-gray-100">
             {recipeEntries.map(([ingCode, qty]) => {
-              const ing = inventory.find((i) => i.code === ingCode);
+              const ing = inventory.find((i: any) => i.code === ingCode);
               return (
                 <div key={ingCode} className="py-2.5 flex justify-between items-center text-xs">
                   <div>
@@ -52,7 +59,7 @@ export const RecipeBuilderView: React.FC<{ productCode: string; onBack: () => vo
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-bold text-gray-700">
-                      {qty} {ing?.unit || "units"}
+                      {String(qty)} {ing?.unit || "units"}
                     </span>
                     <button
                       onClick={() => removeRecipeIngredient(productCode, ingCode)}
@@ -77,8 +84,8 @@ export const RecipeBuilderView: React.FC<{ productCode: string; onBack: () => vo
             >
               <option value="">Select Raw Material</option>
               {inventory
-                .filter((i) => !(i.code in recipe))
-                .map((i) => (
+                .filter((i: any) => !(i.code in recipe))
+                .map((i: any) => (
                   <option key={i.code} value={i.code}>
                     {i.name} ({i.unit})
                   </option>

@@ -137,7 +137,7 @@ function BakersBrainApp() {
         {currentPage === "products" && <ProductsView onNavigate={setCurrentPage} />}
         {currentPage === "inventory" && <InventoryView onNavigate={setCurrentPage} />}
         {currentPage === "purchases" && <PurchasesView onBack={() => setCurrentPage("inventory")} />}
-        {currentPage === "reports" && <ReportsView />}
+        {currentPage === "reports" && <ReportsView onNavigate={setCurrentPage} />}
         {currentPage.startsWith("recipe-") && (
           <RecipeBuilderView
             productCode={currentPage.replace("recipe-", "")}

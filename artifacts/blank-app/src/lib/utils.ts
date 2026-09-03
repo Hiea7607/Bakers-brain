@@ -1,12 +1,10 @@
-import { twMerge } from 'tailwind-merge';
-
-import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from "tailwind-merge";
+import { clsx, type ClassValue } from "clsx";
+import { Product, Order, ParsedOrder } from "../context/BakeryContext";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
-
-import { Product, Order, ParsedOrder } from "../context/BakeryContext";
 
 export function parseWhatsAppMessage(
   rawText: string,
@@ -18,7 +16,9 @@ export function parseWhatsAppMessage(
   const lines = rawText.split("\n");
   const getVal = (prefixes: string[]): string => {
     for (const prefix of prefixes) {
-      const line = lines.find((l) => l.toLowerCase().trim().startsWith(prefix.toLowerCase()));
+      const line = lines.find((l) =>
+        l.toLowerCase().trim().startsWith(prefix.toLowerCase())
+      );
       if (line) {
         return line.split(":").slice(1).join(":").trim();
       }
@@ -34,6 +34,8 @@ export function parseWhatsAppMessage(
   const deliveryDate = getVal(["Delivery", "Date", "Time"]) || "Today";
   const location = getVal(["Location", "Address", "Area"]) || "Dhaka";
   const payment = getVal(["Payment", "Method", "Pay"]) || "Cash";
+  const advanceStr = getVal(["Advance", "Paid"]) || "0";
+  const advancePaid = parseInt(advanceStr, 10) || 0;
 
   const quantity = Math.max(1, parseInt(qtyStr, 10) || 1);
 
@@ -46,6 +48,7 @@ export function parseWhatsAppMessage(
   const unitPrice = matched ? matched.price : parseInt(priceStr, 10) || 0;
   const total = parseInt(priceStr, 10) || unitPrice * quantity;
   const cost = (matched ? matched.cost : Math.round(unitPrice * 0.6)) * quantity;
+  const pendingPayment = Math.max(0, total - advancePaid);
 
   return {
     customer,
@@ -59,9 +62,8 @@ export function parseWhatsAppMessage(
     profit: total - cost,
     deliveryDate,
     location,
-    payment,
-    isNewCustomer: !existingOrders.some(
-      (o) => o.customer.toLowerCase() === customer.toLowerCase()
-    ),
+    paymentMethod: payment,
+    advancePaid,
+    pendingPayment,
   };
 }

@@ -94,9 +94,9 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
     });
   };
 
-  const handleConfirmAndSave = () => {
+  const handleConfirmAndSave = async () => {
     if (!parsed) return;
-    const orderId = createOrder(parsed);
+    const orderId = await createOrder(parsed);
     setCreatedTokenId(orderId);
   };
 

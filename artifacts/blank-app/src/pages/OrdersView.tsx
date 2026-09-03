@@ -63,7 +63,7 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs font-bold text-rose-600">{order.id}</span>
                       <span className="font-bold text-sm text-gray-900">{order.customer}</span>
-                      {order.isNewCustomer && (
+                      {order.is_new_customer && (
                         <span className="text-[9px] bg-green-50 text-green-700 font-bold px-1.5 py-0.5 rounded">
                           New
                         </span>
@@ -72,6 +72,24 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                     <p className="text-xs text-gray-400 mt-0.5">{order.phone || "No phone"}</p>
                   </div>
                   <span className="text-[11px] text-gray-400 font-mono">{order.time}</span>
+                </div>
+
+                {/* Body Details */}
+                <div className="bg-gray-50 p-2.5 rounded-lg text-xs space-y-1 text-gray-700">
+                  <div className="flex justify-between font-semibold text-gray-900">
+                    <span>🍰 {order.product_name} × {order.quantity}</span>
+                    <span>৳ {order.total}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-gray-500">
+                    <span>📍 {order.location}</span>
+                    <span>📅 {order.delivery_date}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] pt-1 border-t border-gray-200">
+                    <span className="text-gray-500">Advance: ৳{order.advance_paid}</span>
+                    <span className={order.pending_payment > 0 ? "font-bold text-amber-600" : "text-green-600"}>
+                      Due: ৳{order.pending_payment}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Body Details */}
