@@ -92,24 +92,6 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                   </div>
                 </div>
 
-                {/* Body Details */}
-                <div className="bg-gray-50 p-2.5 rounded-lg text-xs space-y-1 text-gray-700">
-                  <div className="flex justify-between font-semibold text-gray-900">
-                    <span>🍰 {order.productName} × {order.quantity}</span>
-                    <span>৳ {order.total}</span>
-                  </div>
-                  <div className="flex justify-between text-[11px] text-gray-500">
-                    <span>📍 {order.location}</span>
-                    <span>📅 {order.deliveryDate}</span>
-                  </div>
-                  <div className="flex justify-between text-[11px] pt-1 border-t border-gray-200">
-                    <span className="text-gray-500">Advance: ৳{order.advancePaid}</span>
-                    <span className={order.pendingPayment > 0 ? "font-bold text-amber-600" : "text-green-600"}>
-                      Due: ৳{order.pendingPayment}
-                    </span>
-                  </div>
-                </div>
-
                 {/* Footer / Actions */}
                 <div className="flex justify-between items-center pt-1 text-xs">
                   {isPending ? (

@@ -134,8 +134,8 @@ function BakersBrainApp() {
         {currentPage === "dashboard" && <DashboardView onNavigate={setCurrentPage} />}
         {currentPage === "neworder" && <QuickOrderView onOrderSaved={() => setCurrentPage("orders")} />}
         {currentPage === "orders" && <OrdersView onNavigate={setCurrentPage} />}
-        {currentPage === "products" && <ProductsView onNavigate={setCurrentPage} />}
-        {currentPage === "inventory" && <InventoryView onNavigate={setCurrentPage} />}
+        {currentPage === "products" && <ProductsView />}
+        {currentPage === "inventory" && <InventoryView />}
         {currentPage === "purchases" && <PurchasesView onBack={() => setCurrentPage("inventory")} />}
         {currentPage === "reports" && <ReportsView onNavigate={setCurrentPage} />}
         {currentPage.startsWith("recipe-") && (
