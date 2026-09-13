@@ -1,3 +1,4 @@
+import { formatToUniversalDate } from "../lib/dateUtils";
 import React, { useState } from "react";
 import { useBakery, InventoryItem, Purchase } from "../context/BakeryContext";
 
@@ -287,7 +288,7 @@ export const InventoryView: React.FC = () => {
                     </div>
                     <div className="flex justify-between text-[10px] text-gray-500">
                       <span>Source: {pur.source || "Market"}</span>
-                      <span>{new Date(pur.date).toLocaleDateString()}</span>
+                      <span>{formatToUniversalDate(pur.date)}</span>
                     </div>
                   </div>
                 ))

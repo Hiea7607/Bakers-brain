@@ -128,15 +128,32 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [orders, setOrders] = useState<Order[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
 
-  // 1. Fetch All Tables from Supabase Cloud
+  // 1. Fetch All Tables from Supabase Cloud Scoped to Logged-In User ID
   const fetchData = useCallback(async () => {
     try {
+      // CLEAR STATE IMMEDIATELY to prevent old user data flashing on screen
+      setProducts([]);
+      setInventory([]);
+      setOrders([]);
+      setPurchases([]);
+
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+      console.log("CURRENT AUTH USER ID:", user?.id, userError);
+
+      if (userError || !user) {
+        console.error("No active user session found.");
+        return;
+      }
+
       const [pRes, iRes, oRes, purRes] = await Promise.all([
-        supabase.from("products").select("*").eq("is_deleted", false).order("name", { ascending: true }),
-        supabase.from("ingredients").select("*").eq("is_deleted", false).order("name", { ascending: true }),
-        supabase.from("orders").select("*").eq("is_deleted", false).order("date", { ascending: false }),
-        supabase.from("purchases").select("*").order("date", { ascending: false }),
+        supabase.from("products").select("*").eq("user_id", user.id).eq("is_deleted", false).order("name", { ascending: true }),
+        supabase.from("ingredients").select("*").eq("user_id", user.id).eq("is_deleted", false).order("name", { ascending: true }),
+        supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }),
+        supabase.from("purchases").select("*").eq("user_id", user.id).order("date", { ascending: false }),
       ]);
+
+      console.log("PRODUCTS RETURNED FOR USER", user.id, "-->", pRes.data);
 
       if (pRes.data) setProducts(pRes.data as Product[]);
       if (iRes.data) setInventory(iRes.data as InventoryItem[]);
@@ -151,71 +168,81 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     fetchData();
   }, [fetchData]);
 
-  // 2. Add Product
+  // 2. Add Product with user_id
   const addProduct = async (product: { code: string; name: string; price: number }) => {
-    const newProduct: Product = {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const newProduct: Product & { user_id: string } = {
       code: product.code.toUpperCase().trim(),
       name: product.name.trim(),
       price: product.price,
       cost: 0,
       status: "Active",
+      user_id: user.id,
     };
 
     setProducts((prev) => [...prev, newProduct]);
     await supabase.from("products").insert([newProduct]);
   };
 
-  // 3. Soft Delete Product (With Error Tracking)
+  // 3. Soft Delete Product
   const deleteProduct = async (code: string) => {
     try {
-      const { error } = await supabase.from("products").update({ is_deleted: true }).eq("code", code);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { error } = await supabase.from("products").update({ is_deleted: true }).eq("code", code).eq("user_id", user.id);
       if (error) {
-        console.error("Supabase Error:", error);
         alert(`Database refused to delete: ${error.message}`);
         return; 
       }
       setProducts((prev) => prev.filter((p) => p.code !== code));
     } catch (err) {
-      console.error("Network Error:", err);
       alert("Failed to connect to the database.");
     }
   };
 
-  // 4. Soft Delete Ingredient (With Error Tracking)
+  // 4. Soft Delete Ingredient
   const deleteInventoryItem = async (code: string) => {
     try {
-      const { error } = await supabase.from("ingredients").update({ is_deleted: true }).eq("code", code);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { error } = await supabase.from("ingredients").update({ is_deleted: true }).eq("code", code).eq("user_id", user.id);
       if (error) {
-        console.error("Supabase Error:", error);
         alert(`Database refused to delete: ${error.message}`);
         return; 
       }
       setInventory((prev) => prev.filter((item) => item.code !== code));
       setPurchases((prev) => prev.filter((p) => p.code !== code));
     } catch (err) {
-      console.error("Network Error:", err);
       alert("Failed to connect to the database.");
     }
   };
 
-  // 5. Soft Delete Order (With Error Tracking)
+  // 5. Soft Delete Order
   const deleteOrder = async (id: string) => {
     try {
-      const { error } = await supabase.from("orders").update({ is_deleted: true }).eq("id", id);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { error } = await supabase.from("orders").update({ is_deleted: true }).eq("id", id).eq("user_id", user.id);
       if (error) {
-        console.error("Supabase Error:", error);
         alert(`Database refused to delete: ${error.message}`);
         return; 
       }
       setOrders((prev) => prev.filter((o) => o.id !== id));
     } catch (err) {
-      console.error("Network Error:", err);
       alert("Failed to connect to the database.");
     }
   };
 
-  // 6. Deduct Ingredient (Damage / Waste)
+  // 6. Deduct Ingredient Stock
   const deductInventoryItem = async (code: string, quantity: number, _reason: string) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     const currentItem = inventory.find((i) => i.code === code);
     if (!currentItem) return;
 
@@ -225,17 +252,21 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       prev.map((item) => (item.code === code ? { ...item, stock: newStock } : item))
     );
 
-    await supabase.from("ingredients").update({ stock: newStock }).eq("code", code);
+    await supabase.from("ingredients").update({ stock: newStock }).eq("code", code).eq("user_id", user.id);
   };
 
-  // 7. Save Purchase Batch & Recalculate Weighted Average Rate (WAC)
+  // 7. Save Purchase Batch with user_id
   const savePurchase = async (purchase: Omit<Purchase, "id" | "date" | "total_cost">, minimum = 2) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     const totalCost = purchase.quantity * purchase.unit_price;
     const purId = `PUR-${Date.now().toString().slice(-6)}`;
-    const newPur: Purchase = {
+    const newPur = {
       id: purId,
       date: new Date().toISOString(),
       total_cost: totalCost,
+      user_id: user.id,
       ...purchase,
     };
 
@@ -281,25 +312,33 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         stock: updatedStock,
         minimum,
         unit_cost: weightedAvgCost,
+        user_id: user.id,
+        is_deleted: false,
       },
     ]);
 
     if (stockError) {
-      console.error("Stock update blocked:", stockError);
+      console.error("INGREDIENT SAVE ERROR:", stockError.message);
+    } else {
+      console.log("INGREDIENT SAVED SUCCESSFULLY FOR USER:", user.id);
+    }
+
+    if (stockError) {
       alert(`Stock Update Error: ${stockError.message}`);
       return; 
     }
 
     const { error: purchaseError } = await supabase.from("purchases").insert([newPur]);
-
     if (purchaseError) {
-      console.error("Purchase blocked by Supabase:", purchaseError);
       alert(`Database Error: ${purchaseError.message}`);
     }
   };
 
-  // 8. Attach Ingredient to Product Recipe
+  // 8. Attach Ingredient to Product Recipe with user_id
   const attachRecipeItem = async (productCode: string, ingredientCode: string, quantity: number) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     const ingredient = inventory.find((i) => i.code === ingredientCode);
     const lineCost = (ingredient?.unit_cost || 0) * quantity;
 
@@ -314,6 +353,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         product_code: productCode,
         ingredient_code: ingredientCode,
         quantity,
+        user_id: user.id,
       },
     ]);
 
@@ -322,14 +362,17 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       await supabase
         .from("products")
         .update({ cost: parseFloat(((targetProduct.cost || 0) + lineCost).toFixed(2)) })
-        .eq("code", productCode);
+        .eq("code", productCode)
+        .eq("user_id", user.id);
     }
   };
 
-  // 9. Create Order & Auto-Deduct Recipe Stock
+  // 9. Create Order & Auto-Deduct Recipe Stock with user_id
   const createOrder = async (parsed: ParsedOrder): Promise<string> => {
-    const now = new Date();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
 
+    const now = new Date();
     const todayStr = now.toDateString();
     const todayOrdersCount = orders.filter((o) => new Date(o.date).toDateString() === todayStr).length;
     const nextOrderNum = (todayOrdersCount + 1).toString().padStart(2, "0");
@@ -339,7 +382,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const isNew = orders.some((o) => o.phone && o.phone === parsed.phone) ? 0 : 1;
     const status = parsed.pendingPayment <= 0 ? "Paid" : "Pending";
 
-    const newOrder: Order = {
+    const newOrder = {
       id: orderId,
       date: now.toISOString(),
       time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -359,15 +402,18 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       payment_method: parsed.paymentMethod,
       status,
       is_new_customer: isNew,
+      user_id: user.id,
+      is_deleted: false,
     };
 
-    setOrders((prev) => [newOrder, ...prev]);
+    setOrders((prev) => [newOrder as Order, ...prev]);
     await supabase.from("orders").insert([newOrder]);
 
     const { data: recipeData } = await supabase
       .from("recipes")
       .select("ingredient_code, quantity")
-      .eq("product_code", parsed.productCode);
+      .eq("product_code", parsed.productCode)
+      .eq("user_id", user.id);
 
     if (recipeData && recipeData.length > 0) {
       for (const item of recipeData) {
@@ -383,7 +429,8 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           await supabase
             .from("ingredients")
             .update({ stock: remainingStock })
-            .eq("code", item.ingredient_code);
+            .eq("code", item.ingredient_code)
+            .eq("user_id", user.id);
         }
       }
     }
@@ -393,6 +440,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // 10. Mark Order as Paid
   const markOrderPaid = async (orderId: string) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     setOrders((prev) =>
       prev.map((o) =>
         o.id === orderId ? { ...o, status: "Paid" as const, advance_paid: o.total, pending_payment: 0 } : o
@@ -404,14 +454,14 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       await supabase
         .from("orders")
         .update({ status: "Paid", advance_paid: target.total, pending_payment: 0 })
-        .eq("id", orderId);
+        .eq("id", orderId)
+        .eq("user_id", user.id);
     }
   };
 
   // Analytics & CRM Calculations
   const customers = useMemo(() => {
     const map: Record<string, CustomerSummary> = {};
-
     orders.forEach((o) => {
       const key = o.phone || o.customer;
       if (!map[key]) {
@@ -521,7 +571,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [orders, inventory, products]);
 
-  // Export functions perfectly mapped to your Supabase tables
   const exportOrdersCSV = () => {
     if (orders.length === 0) {
       alert("No orders to export yet!");

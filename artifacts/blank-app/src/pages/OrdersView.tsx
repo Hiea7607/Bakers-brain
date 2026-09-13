@@ -1,3 +1,4 @@
+import { formatToUniversalDate } from "../lib/dateUtils";
 import React, { useState } from "react";
 import { useBakery } from "../context/BakeryContext";
 
@@ -82,7 +83,7 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                   </div>
                   <div className="flex justify-between text-[11px] text-gray-500">
                     <span>📍 {order.location}</span>
-                    <span>📅 {order.delivery_date}</span>
+                    <span>📅 {formatToUniversalDate(order.delivery_date)}</span>
                   </div>
                   <div className="flex justify-between text-[11px] pt-1 border-t border-gray-200">
                     <span className="text-gray-500">Advance: ৳{order.advance_paid}</span>

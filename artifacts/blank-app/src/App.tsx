@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BakeryProvider, useBakery } from "./context/BakeryContext";
 import { DashboardView } from "./pages/DashboardView";
@@ -8,28 +8,219 @@ import { ProductsView } from "./pages/ProductsView";
 import { RecipeBuilderView } from "./pages/RecipeBuilderView";
 import { InventoryView } from "./pages/InventoryView";
 import { PurchasesView } from "./pages/PurchasesView";
-import { ReportsView } from "./pages/ReportsView";
+import { ReportsView } from "./pages/ReportsView"; // <--- Fixed path here
+import { AdminPortalView } from "./AdminPortalView";
+import { ClientLockoutView } from "./ClientLockoutView";
+import { formatToUniversalDate } from "./lib/dateUtils";
+import { supabase } from "./lib/supabaseClient";
 
 const queryClient = new QueryClient();
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem("bb_auth") === "true");
+  const [userRole, setUserRole] = useState(() => localStorage.getItem("bb_role") || "business");
+
+  const lockoutReason = localStorage.getItem("bb_lockout_reason") as "locked" | "expired" | null;
+  const businessName = localStorage.getItem("bb_business_name") || "Business Account";
+
+  const handleLogin = (role: string) => {
+    setIsAuthenticated(true);
+    setUserRole(role);
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    localStorage.removeItem("bb_auth");
+    localStorage.removeItem("bb_role");
+    localStorage.removeItem("bb_lockout_reason");
+    localStorage.removeItem("bb_business_name");
+    setIsAuthenticated(false);
+  };
+
   return (
     <QueryClientProvider client={queryClient}>
       <BakeryProvider>
-        <BakersBrainApp />
+        {!isAuthenticated ? (
+          <LandingGateway onLogin={handleLogin} />
+        ) : lockoutReason ? (
+          <ClientLockoutView 
+            reason={lockoutReason} 
+            businessName={businessName} 
+            onLogout={handleLogout} 
+          />
+        ) : userRole === 'admin' ? (
+          <AdminPortalView onLogout={handleLogout} />
+        ) : (
+          <BakersBrainApp userRole={userRole} onLogout={handleLogout} />
+        )}
       </BakeryProvider>
     </QueryClientProvider>
   );
 }
 
-function BakersBrainApp() {
-  const [currentPage, setCurrentPage] = useState("dashboard");
+// Secure Landing / Login Gateway
+function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
+  const [activeTab, setActiveTab] = useState("business");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [lastAdminSession, setLastAdminSession] = useState<{name: string, date: string} | null>(null);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("lastAdminSession");
+    if (saved) {
+      setLastAdminSession(JSON.parse(saved));
+    }
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError) throw authError;
+
+      const { data: rosterData, error: rosterError } = await supabase
+        .from('client_roster')
+        .select('role, owner_name, is_locked, expiry_date, business_name')
+        .eq('email', authData.user.email)
+        .single();
+
+      if (rosterError || !rosterData) {
+        await supabase.auth.signOut();
+        throw new Error("Account configuration not found.");
+      }
+
+      const requestedPortal = activeTab.toLowerCase(); 
+
+      if (rosterData.role !== requestedPortal) {
+        await supabase.auth.signOut();
+        throw new Error(`Unauthorized. Please use the ${rosterData.role} portal.`);
+      }
+
+      if (rosterData.role === 'admin') {
+        localStorage.setItem("lastAdminSession", JSON.stringify({
+          name: rosterData.owner_name || "Md Golam Rabbany",
+          date: formatToUniversalDate(new Date())
+        }));
+      }
+
+      if (rosterData.role === 'business') {
+        const isLocked = rosterData.is_locked;
+        const isExpired = rosterData.expiry_date ? new Date(rosterData.expiry_date) < new Date() : false;
+
+        if (isLocked || isExpired) {
+          localStorage.setItem("bb_lockout_reason", isLocked ? "locked" : "expired");
+          localStorage.setItem("bb_business_name", rosterData.business_name || "Business Account");
+        } else {
+          localStorage.removeItem("bb_lockout_reason");
+          localStorage.removeItem("bb_business_name");
+        }
+      }
+
+      localStorage.setItem("bb_auth", "true");
+      localStorage.setItem("bb_role", rosterData.role);
+
+      onLogin(rosterData.role);
+
+    } catch (err: any) {
+      setError(err.message || "Failed to sign in. Please check your credentials.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col justify-center items-center p-6 font-sans shadow-2xl">
+      <div className="w-full text-center space-y-6">
+        <div>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight flex justify-center items-center gap-2">
+            <span>💼</span> Business Brain
+          </h1>
+          <p className="text-xs text-gray-500 mt-1">Secure Management Gateway</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-100 text-left">
+          <div className="flex mb-6 border-b border-gray-200">
+            <button 
+              type="button"
+              onClick={() => { setActiveTab('business'); setEmail(''); setPassword(''); setError(''); }}
+              className={`flex-1 pb-3 text-center text-xs font-bold transition-colors ${activeTab === 'business' ? 'text-rose-600 border-b-2 border-rose-600' : 'text-gray-400 hover:text-gray-600'}`}
+            >
+              Business Portal
+            </button>
+            <button 
+              type="button"
+              onClick={() => { setActiveTab('admin'); setEmail(''); setPassword(''); setError(''); }}
+              className={`flex-1 pb-3 text-center text-xs font-bold transition-colors ${activeTab === 'admin' ? 'text-rose-600 border-b-2 border-rose-600' : 'text-gray-400 hover:text-gray-600'}`}
+            >
+              Admin Portal
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Enter email..."
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password..."
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono"
+                required
+              />
+            </div>
+            {error && <p className="text-xs font-bold text-red-500">{error}</p>}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-lg text-sm shadow-md transition active:scale-95 disabled:opacity-50"
+            >
+              {loading ? "Authenticating..." : "Unlock Dashboard →"}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: () => void }) {
+  // 1. Remember the last page across page refreshes
+  const [currentPage, setCurrentPage] = useState(() => localStorage.getItem("bb_current_page") || "dashboard");
   const [showDrawer, setShowDrawer] = useState(false);
-  const { stats, exportDatabaseJSON, exportOrdersCSV } = useBakery();
+  const { stats, exportDatabaseJSON, exportOrdersCSV, fetchData } = useBakery();
+
+  // Automatically fetch fresh tenant data on login/mount
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // 2. Save the current page to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem("bb_current_page", currentPage);
+  }, [currentPage]);
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col justify-between shadow-2xl relative pb-20 font-sans">
-      {/* Top Header */}
       <header className="bg-rose-600 text-white p-4 flex items-center justify-between sticky top-0 z-30 shadow-md">
         <div className="flex items-center gap-3">
           <button
@@ -41,10 +232,10 @@ function BakersBrainApp() {
             </svg>
           </button>
           <h1 className="text-xl font-bold tracking-wide flex items-center gap-2">
-            <span>🍰</span> Baker's Brain
+            <span>💼</span> Business Brain
           </h1>
         </div>
-        <div>
+        <div className="flex items-center gap-2">
           {stats.lowStockCount > 0 && (
             <span
               onClick={() => setCurrentPage("inventory")}
@@ -57,7 +248,6 @@ function BakersBrainApp() {
         </div>
       </header>
 
-      {/* Drawer Menu */}
       {showDrawer && (
         <div className="fixed inset-0 z-50 flex">
           <div className="fixed inset-0 bg-black/50" onClick={() => setShowDrawer(false)} />
@@ -65,10 +255,10 @@ function BakersBrainApp() {
             <div>
               <div className="flex items-center justify-between pb-4 border-b">
                 <div className="flex items-center gap-2">
-                  <span className="text-2xl">🧁</span>
+                  <span className="text-2xl">💼</span>
                   <div>
-                    <h2 className="font-bold text-gray-800">Baker's Brain</h2>
-                    <p className="text-xs text-gray-500">Smart Bakery Management</p>
+                    <h2 className="font-bold text-gray-800">Business Brain</h2>
+                    <p className="text-xs text-gray-500 capitalize">{userRole} Portal</p>
                   </div>
                 </div>
                 <button
@@ -124,12 +314,19 @@ function BakersBrainApp() {
               </div>
             </div>
 
-            <div className="pt-4 border-t text-center text-xs text-gray-400">Offline First • V1.0.0</div>
+            <div className="pt-4 border-t space-y-3">
+              <button
+                onClick={onLogout}
+                className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs py-2.5 rounded-lg transition text-center"
+              >
+                🚪 Secure Logout
+              </button>
+              <div className="text-center text-xs text-gray-400">Offline First • V1.0.0</div>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Main Content Area */}
       <main className="flex-1 p-4 overflow-y-auto">
         {currentPage === "dashboard" && <DashboardView onNavigate={setCurrentPage} />}
         {currentPage === "neworder" && <QuickOrderView onOrderSaved={() => setCurrentPage("orders")} />}
@@ -146,7 +343,6 @@ function BakersBrainApp() {
         )}
       </main>
 
-      {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-gray-200 px-4 py-2 flex justify-between items-center z-40 shadow-lg">
         <button
           onClick={() => setCurrentPage("dashboard")}
