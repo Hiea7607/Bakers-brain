@@ -7,7 +7,6 @@ import { OrdersView } from "./pages/OrdersView";
 import { ProductsView } from "./pages/ProductsView";
 import { RecipeBuilderView } from "./pages/RecipeBuilderView";
 import { InventoryView } from "./pages/InventoryView";
-import { PurchasesView } from "./pages/PurchasesView";
 import { ReportsView } from "./pages/ReportsView"; // <--- Fixed path here
 import { AdminPortalView } from "./AdminPortalView";
 import { ClientLockoutView } from "./ClientLockoutView";
@@ -276,7 +275,6 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                   { id: "orders", label: "Orders Manager", icon: "📦" },
                   { id: "products", label: "Products Catalog", icon: "🎂" },
                   { id: "inventory", label: "Raw Ingredients", icon: "🥣" },
-                  { id: "purchases", label: "Purchase History", icon: "🧾" },
                   { id: "reports", label: "Reports & Analytics", icon: "📊" },
                 ].map((item) => (
                   <button
@@ -333,7 +331,6 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
         {currentPage === "orders" && <OrdersView onNavigate={setCurrentPage} />}
         {currentPage === "products" && <ProductsView />}
         {currentPage === "inventory" && <InventoryView />}
-        {currentPage === "purchases" && <PurchasesView onBack={() => setCurrentPage("inventory")} />}
         {currentPage === "reports" && <ReportsView onNavigate={setCurrentPage} />}
         {currentPage.startsWith("recipe-") && (
           <RecipeBuilderView

@@ -5,7 +5,10 @@ import { useBakery, InventoryItem, Purchase } from "../context/BakeryContext";
 export const InventoryView: React.FC = () => {
   const { inventory, purchases, savePurchase, deleteInventoryItem, deductInventoryItem } = useBakery();
 
+  // Search & Modal State
+  const [searchQuery, setSearchQuery] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [selectedIngredient, setSelectedIngredient] = useState<InventoryItem | null>(null);
 
   // Manual deduction state
@@ -25,26 +28,50 @@ export const InventoryView: React.FC = () => {
 
   const handleOpenAdd = (existingItem?: InventoryItem) => {
     if (existingItem) {
+      setIsEditing(true);
       setCode(existingItem.code);
       setName(existingItem.name);
       setUnit(existingItem.unit);
       setMinimum(String(existingItem.minimum));
+
+      // Find the most recent purchase to pre-fill the rest of the information
+      const itemPurchases = purchases.filter((p) => p.code === existingItem.code);
+      const lastPurchase = itemPurchases[itemPurchases.length - 1]; 
+
+      if (lastPurchase) {
+        setUnitPrice(String(lastPurchase.unit_price || existingItem.unit_cost || ""));
+        setSource(lastPurchase.source || "");
+        setNotes(lastPurchase.notes || "");
+      } else {
+        setUnitPrice(String(existingItem.unit_cost || ""));
+        setSource("");
+        setNotes("");
+      }
+
+      // Keep quantity empty so the user doesn't accidentally double-purchase
+      setQuantity("0"); 
     } else {
-      setCode(""); // Starts completely blank for your custom ID
+      setIsEditing(false);
+      // Auto-generate sequence like ING01, ING02, etc.
+      const nextNum = inventory.length + 1;
+      const autoCode = `ING${String(nextNum).padStart(2, "0")}`;
+      setCode(autoCode);
+
       setName("");
       setUnit("kg");
       setMinimum("2");
+      setQuantity("");
+      setUnitPrice("");
+      setSource("");
+      setNotes("");
     }
-    setQuantity("");
-    setUnitPrice("");
-    setSource("");
-    setNotes("");
     setShowAddModal(true);
   };
 
   const handleSavePurchase = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!code || !name || !quantity || !unitPrice) {
+    // Use quantity === "" so that entering "0" is allowed for edits
+    if (!code || !name || quantity === "" || !unitPrice) {
       alert("Please fill in Code, Name, Quantity, and Unit Price.");
       return;
     }
@@ -92,6 +119,13 @@ export const InventoryView: React.FC = () => {
     setDeductQty("");
   };
 
+  // Filter inventory based on search query
+  const filteredInventory = inventory.filter(
+    (item) =>
+      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.code.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   const ingredientPurchases: Purchase[] = selectedIngredient
     ? purchases.filter((p) => p.code === selectedIngredient.code)
     : [];
@@ -99,78 +133,117 @@ export const InventoryView: React.FC = () => {
   const totalSpentOnItem = ingredientPurchases.reduce((sum, p) => sum + (p.total_cost || 0), 0);
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-lg font-bold text-gray-800">5. Ingredients (Stock)</h2>
-          <p className="text-[11px] text-gray-500">Tap item for history or manage damage/waste deductions</p>
-        </div>
-        <button
-          onClick={() => handleOpenAdd()}
-          className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm"
-        >
-          + Add Purchase
-        </button>
-      </div>
+    /* APP WRAPPER: Locked tight, solid bg-gray-50 to seamlessly blend with the header */
+    <div className="fixed top-[60px] bottom-[70px] left-0 right-0 flex flex-col w-full max-w-md mx-auto bg-gray-50 z-10">
 
-      {/* Inventory List */}
-      <div className="space-y-2.5">
-        {inventory.length === 0 ? (
-          <div className="bg-white p-8 rounded-xl text-center text-gray-400 text-xs border border-gray-100">
-            No ingredients in stock. Tap <strong>+ Add Purchase</strong>.
+      {/* --- PINNED HEADER CONTAINER --- */}
+      <div className="flex-none bg-gray-50 px-4 pt-4 pb-2 z-20">
+        {/* Header & Add Button */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Ingredients (Stock)</h2>
+            <p className="text-xs text-gray-500">Tap item for history or manage deductions</p>
+          </div>
+          <button
+            onClick={() => handleOpenAdd()}
+            className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl shadow-sm transition whitespace-nowrap"
+          >
+            + Add Purchase
+          </button>
+        </div>
+
+        {/* Search Bar */}
+        <div className="relative mt-4">
+          <input
+            type="text"
+            placeholder="🔍 Search ingredients by name or code..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 shadow-sm transition"
+          />
+        </div>
+      </div>
+      {/* --- END PINNED HEADER --- */}
+
+      {/* --- SCROLLABLE CARDS CONTAINER --- */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
+        {filteredInventory.length === 0 ? (
+          <div className="bg-white p-8 rounded-[20px] text-center text-gray-400 text-xs border border-gray-100 shadow-sm">
+            {inventory.length === 0 ? (
+              <>No ingredients in stock. Tap <strong>+ Add Purchase</strong>.</>
+            ) : (
+              <>No matching ingredients found for "{searchQuery}".</>
+            )}
           </div>
         ) : (
-          inventory.map((item) => {
-            const isLowStock = item.stock <= item.minimum;
+          <div className="flex flex-col gap-4">
+            {filteredInventory.map((item) => {
+              const isLowStock = item.stock <= item.minimum;
 
-            return (
-              <div
-                key={item.code}
-                className={`bg-white p-3.5 rounded-xl shadow-xs border transition flex items-center justify-between ${
-                  isLowStock ? "border-rose-200 bg-rose-50/20" : "border-gray-100"
-                }`}
-              >
-                <div
-                  className="space-y-0.5 cursor-pointer flex-1"
-                  onClick={() => setSelectedIngredient(item)}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[10px] font-bold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-                      {item.code}
-                    </span>
-                    <h3 className="font-bold text-sm text-gray-900">{item.name}</h3>
-                  </div>
-                  <p className="text-xs text-gray-500">
-                    Avg Rate: <strong className="text-gray-900">৳ {item.unit_cost} / {item.unit}</strong>
-                  </p>
-                </div>
+              return (
+                <div key={item.code} className={`bg-white rounded-2xl p-5 border shadow-sm space-y-4 transition-all w-full ${isLowStock ? 'border-rose-300 bg-rose-50/20' : 'border-gray-100'}`}>
 
-                <div className="flex items-center gap-3">
-                  <div className="text-right space-y-1" onClick={() => setSelectedIngredient(item)}>
-                    <div className="text-sm font-black text-gray-900">
-                      {item.stock} <span className="text-xs font-normal text-gray-500">{item.unit}</span>
+                  {/* Header: Code, Name & Status */}
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${isLowStock ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
+                        {item.code}
+                      </span>
+                      <h3 className="font-bold text-gray-800 text-lg mt-1 cursor-pointer" onClick={() => setSelectedIngredient(item)}>{item.name}</h3>
                     </div>
-                    <span
-                      className={`text-[9px] font-bold px-2 py-0.5 rounded-full inline-block ${
-                        isLowStock ? "bg-rose-100 text-rose-700" : "bg-green-100 text-green-700"
-                      }`}
-                    >
-                      {isLowStock ? "LOW STOCK" : "IN STOCK"}
+                    <span className={`text-xs font-black px-3 py-1.5 rounded-full ${isLowStock ? 'bg-red-500 text-white shadow-sm' : 'bg-green-50 text-green-700'}`}>
+                      {isLowStock ? '⚠️ LOW STOCK' : 'IN STOCK'}
                     </span>
                   </div>
 
-                  <button
-                    onClick={() => setShowDeductModal(item)}
-                    title="Manual Deduct / Waste / Damage"
-                    className="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 p-2 rounded-lg text-xs font-bold"
-                  >
-                    📉 Deduct
-                  </button>
+                  {/* Stats Table */}
+                  <div className="grid grid-cols-3 gap-2 bg-gray-50 p-3 rounded-xl text-center cursor-pointer" onClick={() => setSelectedIngredient(item)}>
+                    <div>
+                      <div className="text-xs text-gray-400">Stock</div>
+                      <div className={`text-sm font-bold ${isLowStock ? 'text-red-600' : 'text-gray-900'}`}>{item.stock} <span className="text-xs font-normal text-gray-500">{item.unit}</span></div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-400">Avg Rate</div>
+                      <div className="text-sm font-bold text-gray-900">৳ {item.unit_cost}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-400">Min Alert</div>
+                      <div className="text-sm font-bold text-gray-900">{item.minimum} <span className="text-xs font-normal text-gray-500">{item.unit}</span></div>
+                    </div>
+                  </div>
+
+                  {/* Bottom Actions: History, Edit, Deduct */}
+                  <div className="flex justify-between items-center pt-2">
+                    <button
+                      onClick={() => setSelectedIngredient(item)}
+                      className="flex items-center gap-1.5 px-4 py-2.5 bg-gray-900 text-white rounded-xl text-xs font-semibold hover:bg-gray-800 transition"
+                    >
+                      📊 History
+                    </button>
+
+                    <div className="flex items-center gap-4">
+                      <button
+                        onClick={() => handleOpenAdd(item)}
+                        className="text-xs text-gray-500 hover:text-gray-900 font-bold transition"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => setShowDeductModal(item)}
+                        className="flex items-center gap-1.5 text-xs text-amber-600 hover:text-amber-800 font-bold transition"
+                      >
+                        <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
+                          <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                        </svg>
+                        Deduct
+                      </button>
+                    </div>
+                  </div>
+
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
       </div>
 
@@ -281,15 +354,21 @@ export const InventoryView: React.FC = () => {
                 <p className="text-xs text-gray-400 text-center py-4">No logged purchase records for this item.</p>
               ) : (
                 ingredientPurchases.map((pur) => (
-                  <div key={pur.id} className="bg-gray-50 p-2.5 rounded-lg border border-gray-100 text-xs space-y-1">
+                  <div key={pur.id} className="bg-gray-50 p-2.5 rounded-lg border border-gray-100 text-xs flex flex-col gap-1.5">
                     <div className="flex justify-between items-center font-bold text-gray-800">
                       <span>+{pur.quantity} {pur.unit} @ ৳{pur.unit_price}/{pur.unit}</span>
                       <span className="text-gray-900">৳ {pur.total_cost}</span>
                     </div>
-                    <div className="flex justify-between text-[10px] text-gray-500">
+                    <div className="flex flex-wrap justify-between items-center text-[10px] text-gray-500">
                       <span>Source: {pur.source || "Market"}</span>
                       <span>{formatToUniversalDate(pur.date)}</span>
                     </div>
+                    {/* Restored Notes Block */}
+                    {pur.notes && (
+                      <div className="text-[10px] text-gray-500 italic bg-white p-1.5 border border-gray-100 rounded">
+                        <span className="font-medium text-gray-400">Note: </span> {pur.notes}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -323,7 +402,7 @@ export const InventoryView: React.FC = () => {
         </div>
       )}
 
-      {/* Add New Purchase Modal */}
+      {/* Add New Purchase / Edit Details Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <form
@@ -331,7 +410,9 @@ export const InventoryView: React.FC = () => {
             className="bg-white rounded-2xl max-w-sm w-full p-4 shadow-2xl space-y-3"
           >
             <div className="flex justify-between items-center border-b pb-2">
-              <h3 className="font-bold text-sm text-gray-800">Record Purchase / Stock</h3>
+              <h3 className="font-bold text-sm text-gray-800">
+                {isEditing ? "Edit Ingredient / Add Stock" : "Record Purchase / Stock"}
+              </h3>
               <button
                 type="button"
                 onClick={() => setShowAddModal(false)}
@@ -348,11 +429,12 @@ export const InventoryView: React.FC = () => {
                 required
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
-                placeholder="e.g. ING-01"
-                className="w-full border rounded-lg p-2 mt-0.5 font-mono uppercase"
+                placeholder="e.g. ING01"
+                className="w-full border rounded-lg p-2 mt-0.5 font-mono uppercase bg-gray-50"
+                disabled={isEditing} // Prevent changing code if editing
               />
             </div>
-            
+
             <div className="space-y-2 text-xs">
               <div>
                 <label className="text-[10px] font-bold text-gray-500">Ingredient Name</label>
@@ -378,6 +460,7 @@ export const InventoryView: React.FC = () => {
                     placeholder="e.g. 3"
                     className="w-full border rounded-lg p-2 mt-0.5"
                   />
+                  {isEditing && <p className="text-[9px] text-gray-400 mt-1">Enter 0 to only update info.</p>}
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-500">Unit (kg/litre/pcs)</label>
@@ -426,7 +509,7 @@ export const InventoryView: React.FC = () => {
                   className="w-full border rounded-lg p-2 mt-0.5"
                 />
               </div>
-              
+
               <div>
                 <label className="text-[10px] font-bold text-gray-500">Low Stock Alert At</label>
                 <input
@@ -445,7 +528,7 @@ export const InventoryView: React.FC = () => {
               type="submit"
               className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-lg text-xs shadow-md transition"
             >
-              SAVE PURCHASE BATCH
+              {isEditing ? "UPDATE / SAVE BATCH" : "SAVE PURCHASE BATCH"}
             </button>
           </form>
         </div>
