@@ -152,7 +152,7 @@ export const ReportsView: React.FC<{ onNavigate: (page: string) => void }> = ({ 
                 ))}
               </select>
             </div>
-            
+
             <div className="h-56">
               {costDriversData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">

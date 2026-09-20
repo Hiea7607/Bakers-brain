@@ -91,7 +91,7 @@ export function AdminPortalView({ onLogout }: { onLogout: () => void }) {
             <span>🛡️</span> Admin Command Center
           </h1>
           <p className="text-xs text-gray-500">
-            Managing 410 Total Client Slots • {clients.length} Active Client Roster Accounts
+            Think Beyond the Limit • {clients.length} Active Client Roster Accounts
           </p>
         </div>
 

@@ -29,6 +29,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
     const phone = data["phone"] || data["mobile"] || data["number"] || "";
     const loc = data["address"] || data["location"] || "Direct Pickup";
     const rawDateStr = data["delivery date"] || data["delivery"] || data["date"] || "Today";
+
     const formatStandardDate = (input: string) => {
       const d = new Date();
       if (input.toLowerCase().includes("tomorrow")) d.setDate(d.getDate() + 1);
@@ -96,7 +97,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
       customer,
       phone,
       productCode: matchedProduct?.code || "GEN",
-      productName: matchedProduct?.name || rawProdName || "Bakery Item",
+      productName: matchedProduct?.name || rawProdName || "Food Item",
       quantity: qty,
       unitPrice,
       total: totalPrice,
@@ -143,7 +144,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
               rows={6}
               value={rawText}
               onChange={(e) => setRawText(e.target.value)}
-              placeholder={`Customer- Hiea\nAddress- Badda, Nurar Chala\nPhone- 01778012523\nProduct- White Forest Cup Cake\nQuantity- 2\nUnit Price- 75\nTotal Price- 150\nDelivery Paid- 50`}
+              placeholder={`Customer- Hiea\nAddress- Badda, Nurar Chala\nPhone- 01778012523\nProduct- Spicy Chicken Bowl\nQuantity- 2\nUnit Price- 250\nTotal Price- 500\nDelivery Paid- 50`}
               className="w-full border rounded-lg p-3 text-xs focus:ring-2 focus:ring-rose-500 font-mono bg-gray-50 text-gray-800"
             />
             <button
@@ -180,7 +181,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
                   <span className="text-gray-400">Delivery Date:</span>
                   <span className="font-bold text-blue-600">{parsed.deliveryDate}</span>
                 </div>
-                
+
                 <div className="flex justify-between">
                   <span className="text-gray-400">Product:</span>
                   <span className="font-medium text-gray-900">{parsed.productName} × {parsed.quantity}</span>
@@ -217,7 +218,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
         <div className="space-y-3">
           <div className="bg-white border-2 border-dashed border-rose-400 p-4 rounded-xl shadow-md space-y-3">
             <div className="text-center border-b border-gray-200 pb-2">
-              <span className="text-xl">🍰</span>
+              <span className="text-xl">🍽️</span>
               <h3 className="font-bold text-sm text-gray-900">PACKAGING DELIVERY TOKEN</h3>
               <p className="text-[10px] text-gray-400 font-mono">TOKEN ID: {createdTokenId}</p>
             </div>

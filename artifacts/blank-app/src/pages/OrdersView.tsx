@@ -33,7 +33,7 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
     <div className="space-y-4">
       {/* Top Bar */}
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-bold text-gray-800">Orders Manager</h2>
+        <h2 className="text-lg font-bold text-gray-800">3. Orders Manager</h2>
         <button
           onClick={() => onNavigate("neworder")}
           className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm"
@@ -92,7 +92,7 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                 {/* Body Details */}
                 <div className="bg-gray-50 p-2.5 rounded-lg text-xs space-y-1 text-gray-700">
                   <div className="flex justify-between font-semibold text-gray-900">
-                    <span>🍰 {order.product_name} × {order.quantity}</span>
+                    <span>🍽️ {order.product_name} × {order.quantity}</span>
                     <span>৳ {order.total}</span>
                   </div>
                   <div className="flex justify-between text-[11px] text-gray-500">

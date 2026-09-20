@@ -383,7 +383,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
               >
                 🚪 Secure Logout
               </button>
-              <div className="text-center text-xs text-gray-400">Offline First • V1.0.0</div>
+              <div className="text-center text-xs text-gray-400">Online First • V1.0.0</div>
             </div>
           </div>
         </div>
