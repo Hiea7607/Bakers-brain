@@ -28,7 +28,23 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
     const customer = data["customer"] || data["coustomer"] || data["name"] || lines[0] || "Customer";
     const phone = data["phone"] || data["mobile"] || data["number"] || "";
     const loc = data["address"] || data["location"] || "Direct Pickup";
-    const delDate = data["delivery"] || data["date"] || "Today";
+    const rawDateStr = data["delivery date"] || data["delivery"] || data["date"] || "Today";
+    const formatStandardDate = (input: string) => {
+      const d = new Date();
+      if (input.toLowerCase().includes("tomorrow")) d.setDate(d.getDate() + 1);
+      else if (!input.toLowerCase().includes("today")) {
+        const dateParts = input.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+        if (dateParts) {
+          d.setFullYear(parseInt(dateParts[3], 10), parseInt(dateParts[2], 10) - 1, parseInt(dateParts[1], 10));
+        } else {
+          const parsedDate = new Date(input);
+          if (!isNaN(parsedDate.getTime())) d.setTime(parsedDate.getTime());
+        }
+      }
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+    };
+    const delDate = formatStandardDate(rawDateStr);
 
     // Extract quantity
     let qty = 1;
@@ -142,7 +158,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
           {parsed && (
             <div className="bg-white p-4 rounded-xl shadow-md border-2 border-rose-100 space-y-3">
               <div className="flex justify-between items-center border-b pb-2">
-                <h3 className="text-xs font-bold text-gray-800">2. Processed Order Review</h3>
+                <h3 className="text-xs font-bold text-gray-800">Processed Order Review</h3>
                 <span className="text-[10px] bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded-full">Verified</span>
               </div>
 
@@ -159,6 +175,12 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
                   <span className="text-gray-400">Address:</span>
                   <span>{parsed.location}</span>
                 </div>
+
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Delivery Date:</span>
+                  <span className="font-bold text-blue-600">{parsed.deliveryDate}</span>
+                </div>
+                
                 <div className="flex justify-between">
                   <span className="text-gray-400">Product:</span>
                   <span className="font-medium text-gray-900">{parsed.productName} × {parsed.quantity}</span>

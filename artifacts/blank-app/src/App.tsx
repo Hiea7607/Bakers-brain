@@ -7,7 +7,7 @@ import { OrdersView } from "./pages/OrdersView";
 import { ProductsView } from "./pages/ProductsView";
 import { RecipeBuilderView } from "./pages/RecipeBuilderView";
 import { InventoryView } from "./pages/InventoryView";
-import { ReportsView } from "./pages/ReportsView"; // <--- Fixed path here
+import { ReportsView } from "./pages/ReportsView";
 import { AdminPortalView } from "./AdminPortalView";
 import { ClientLockoutView } from "./ClientLockoutView";
 import { formatToUniversalDate } from "./lib/dateUtils";
@@ -115,17 +115,18 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
         const isLocked = rosterData.is_locked;
         const isExpired = rosterData.expiry_date ? new Date(rosterData.expiry_date) < new Date() : false;
 
+        localStorage.setItem("bb_business_name", rosterData.business_name || "Business Account");
+
         if (isLocked || isExpired) {
           localStorage.setItem("bb_lockout_reason", isLocked ? "locked" : "expired");
-          localStorage.setItem("bb_business_name", rosterData.business_name || "Business Account");
         } else {
           localStorage.removeItem("bb_lockout_reason");
-          localStorage.removeItem("bb_business_name");
         }
       }
 
       localStorage.setItem("bb_auth", "true");
       localStorage.setItem("bb_role", rosterData.role);
+      localStorage.setItem("bb_user_email", email);
 
       onLogin(rosterData.role);
 
@@ -203,47 +204,82 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
 }
 
 function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: () => void }) {
-  // 1. Remember the last page across page refreshes
   const [currentPage, setCurrentPage] = useState(() => localStorage.getItem("bb_current_page") || "dashboard");
   const [showDrawer, setShowDrawer] = useState(false);
-  const { stats, exportDatabaseJSON, exportOrdersCSV, fetchData } = useBakery();
+  
+  const businessName = localStorage.getItem("bb_business_name") || "Business Account";
+  const userEmail = localStorage.getItem("bb_user_email") || "user@bakersbrain.com";
+  
+  const { stats = {} as any, products = [], exportDatabaseJSON, exportOrdersCSV, fetchData } = useBakery();
 
-  // Automatically fetch fresh tenant data on login/mount
+  const targetMargin = Number(localStorage.getItem("bb_target_margin")) || 20;
+  const issueProductsCount = (products || []).filter(p => {
+    const netProfit = p.price - (p.cost || 0);
+    const margin = p.price > 0 ? Math.round((netProfit / p.price) * 100) : 0;
+    return netProfit < 0 || margin < targetMargin;
+  }).length;
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // 2. Save the current page to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem("bb_current_page", currentPage);
   }, [currentPage]);
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col justify-between shadow-2xl relative pb-20 font-sans">
-      <header className="bg-rose-600 text-white p-4 flex items-center justify-between sticky top-0 z-30 shadow-md">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowDrawer(true)}
-            className="p-1 hover:bg-rose-700 rounded-md transition"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-          <h1 className="text-xl font-bold tracking-wide flex items-center gap-2">
-            <span>💼</span> Business Brain
-          </h1>
-        </div>
-        <div className="flex items-center gap-2">
-          {stats.lowStockCount > 0 && (
-            <span
-              onClick={() => setCurrentPage("inventory")}
-              className="cursor-pointer bg-yellow-400 text-rose-950 font-extrabold text-xs px-2 py-0.5 rounded-full shadow-sm"
-              title="Low Stock Alert"
+      
+      {/* Properly Wrapped Sticky Header */}
+      <header className="bg-rose-600 text-white p-3 sticky top-0 z-30 shadow-md">
+        <div className="flex items-center justify-between gap-2">
+
+          {/* Left Side: Hamburger Menu Only */}
+          <div className="flex items-center flex-shrink-0">
+            <button
+              onClick={() => setShowDrawer(true)}
+              className="p-1.5 hover:bg-rose-700 rounded-lg transition text-white"
+              title="Open Menu"
             >
-              ⚠️ {stats.lowStockCount} Low
-            </span>
-          )}
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Right Side: Full Badges & Account Info (Now Fits Perfectly!) */}
+          <div className="flex items-center gap-2">
+
+            {/* Badges with full text */}
+            <div className="flex items-center gap-1.5">
+              {issueProductsCount > 0 && (
+                <span
+                  onClick={() => setCurrentPage("products")}
+                  className="cursor-pointer bg-yellow-400 text-yellow-950 font-extrabold text-[11px] px-2 py-0.5 rounded-full shadow-sm hover:bg-yellow-500 transition whitespace-nowrap"
+                  title="Products below target margin"
+                >
+                  🚨 {issueProductsCount} Margins
+                </span>
+              )}
+
+              {stats.lowStockCount > 0 && (
+                <span
+                  onClick={() => setCurrentPage("inventory")}
+                  className="cursor-pointer bg-yellow-400 text-yellow-950 font-extrabold text-[11px] px-2 py-0.5 rounded-full shadow-sm hover:bg-yellow-500 transition whitespace-nowrap"
+                  title="Low Stock Alert"
+                >
+                  ⬇️ {stats.lowStockCount} Low
+                </span>
+              )}
+            </div>
+
+            {/* Tenant Identity Display */}
+            <div className="text-right border-l border-rose-500 pl-2">
+              <div className="text-xs font-extrabold leading-tight truncate max-w-[140px]">{businessName}</div>
+              <div className="text-[11px] text-rose-100 font-medium truncate max-w-[140px]">{userEmail}</div>
+            </div>
+
+          </div>
         </div>
       </header>
 
@@ -325,7 +361,8 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
         </div>
       )}
 
-      <main className="flex-1 p-4 overflow-y-auto">
+      {/* Main Content with professional top spacing */}
+      <main className="flex-1 p-4 pt-5 overflow-y-auto">
         {currentPage === "dashboard" && <DashboardView onNavigate={setCurrentPage} />}
         {currentPage === "neworder" && <QuickOrderView onOrderSaved={() => setCurrentPage("orders")} />}
         {currentPage === "orders" && <OrdersView onNavigate={setCurrentPage} />}

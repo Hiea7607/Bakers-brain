@@ -93,6 +93,7 @@ interface BakeryContextType {
     todaySales: number;
     todayProfit: number;
     todayOrdersCount: number;
+    upcomingDeliveriesCount: number;
     deliveriesTodayCount: number;
     pendingPaymentsAmount: number;
     pendingOrdersCount: number;
@@ -100,6 +101,7 @@ interface BakeryContextType {
     monthlyProfit: number;
     monthlyOrdersCount: number;
     newCustomersThisMonth: number;
+    newCustomersToday: number;
     lowStockCount: number;
     lowSellingCount: number;
     bestSellingProduct: string;
@@ -128,18 +130,14 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [orders, setOrders] = useState<Order[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
 
-  // 1. Fetch All Tables from Supabase Cloud Scoped to Logged-In User ID
   const fetchData = useCallback(async () => {
     try {
-      // CLEAR STATE IMMEDIATELY to prevent old user data flashing on screen
       setProducts([]);
       setInventory([]);
       setOrders([]);
       setPurchases([]);
 
       const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-      console.log("CURRENT AUTH USER ID:", user?.id, userError);
 
       if (userError || !user) {
         console.error("No active user session found.");
@@ -152,8 +150,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }),
         supabase.from("purchases").select("*").eq("user_id", user.id).order("date", { ascending: false }),
       ]);
-
-      console.log("PRODUCTS RETURNED FOR USER", user.id, "-->", pRes.data);
 
       if (pRes.data) setProducts(pRes.data as Product[]);
       if (iRes.data) setInventory(iRes.data as InventoryItem[]);
@@ -168,7 +164,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     fetchData();
   }, [fetchData]);
 
-  // 2. Add Product with user_id
   const addProduct = async (product: { code: string; name: string; price: number }) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -186,7 +181,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     await supabase.from("products").insert([newProduct]);
   };
 
-  // 3. Soft Delete Product
   const deleteProduct = async (code: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -203,7 +197,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 4. Soft Delete Ingredient
   const deleteInventoryItem = async (code: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -221,7 +214,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 5. Soft Delete Order
   const deleteOrder = async (id: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -238,7 +230,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 6. Deduct Ingredient Stock
   const deductInventoryItem = async (code: string, quantity: number, _reason: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -255,7 +246,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     await supabase.from("ingredients").update({ stock: newStock }).eq("code", code).eq("user_id", user.id);
   };
 
-  // 7. Save Purchase Batch with user_id
   const savePurchase = async (purchase: Omit<Purchase, "id" | "date" | "total_cost">, minimum = 2) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -318,12 +308,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     ]);
 
     if (stockError) {
-      console.error("INGREDIENT SAVE ERROR:", stockError.message);
-    } else {
-      console.log("INGREDIENT SAVED SUCCESSFULLY FOR USER:", user.id);
-    }
-
-    if (stockError) {
       alert(`Stock Update Error: ${stockError.message}`);
       return; 
     }
@@ -331,10 +315,55 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const { error: purchaseError } = await supabase.from("purchases").insert([newPur]);
     if (purchaseError) {
       alert(`Database Error: ${purchaseError.message}`);
+      return;
+    }
+
+    // ==========================================
+    // NEW: THE AUTO-COST CASCADE (CHAIN REACTION)
+    // ==========================================
+    const { data: affectedRecipes } = await supabase
+      .from("recipes")
+      .select("product_code")
+      .eq("ingredient_code", purchase.code)
+      .eq("user_id", user.id);
+
+    if (affectedRecipes && affectedRecipes.length > 0) {
+      const productCodes = [...new Set(affectedRecipes.map((r) => r.product_code))];
+
+      for (const pCode of productCodes) {
+        const { data: fullRecipe } = await supabase
+          .from("recipes")
+          .select("ingredient_code, quantity")
+          .eq("product_code", pCode)
+          .eq("user_id", user.id);
+
+        if (fullRecipe) {
+          let recalculatedCost = 0;
+
+          fullRecipe.forEach((item) => {
+            const ingCost = item.ingredient_code === purchase.code
+              ? weightedAvgCost
+              : (inventory.find((i) => i.code === item.ingredient_code)?.unit_cost || 0);
+
+            recalculatedCost += ingCost * item.quantity;
+          });
+
+          const roundedCost = parseFloat(recalculatedCost.toFixed(2));
+
+          await supabase
+            .from("products")
+            .update({ cost: roundedCost })
+            .eq("code", pCode)
+            .eq("user_id", user.id);
+
+          setProducts((prev) =>
+            prev.map((p) => (p.code === pCode ? { ...p, cost: roundedCost } : p))
+          );
+        }
+      }
     }
   };
 
-  // 8. Attach Ingredient to Product Recipe with user_id
   const attachRecipeItem = async (productCode: string, ingredientCode: string, quantity: number) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -367,7 +396,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 9. Create Order & Auto-Deduct Recipe Stock with user_id
   const createOrder = async (parsed: ParsedOrder): Promise<string> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
@@ -438,7 +466,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return orderId;
   };
 
-  // 10. Mark Order as Paid
   const markOrderPaid = async (orderId: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -459,7 +486,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // Analytics & CRM Calculations
   const customers = useMemo(() => {
     const map: Record<string, CustomerSummary> = {};
     orders.forEach((o) => {
@@ -501,10 +527,19 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
 
-    const todayOrders = orders.filter((o) => new Date(o.date).toDateString() === todayStr);
+    // 1. Calculate Today's Sales based on the DELIVERY date, not creation date
+    const todayOrders = orders.filter((o) => {
+      const d = new Date(o.delivery_date);
+      // Fallback just in case an old order has a blank delivery date
+      const validDate = isNaN(d.getTime()) ? new Date(o.date) : d;
+      return validDate.toDateString() === todayStr;
+    });
+
+    // 2. Calculate Monthly Sales based on DELIVERY date
     const monthOrders = orders.filter((o) => {
-      const d = new Date(o.date);
-      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      const d = new Date(o.delivery_date);
+      const validDate = isNaN(d.getTime()) ? new Date(o.date) : d;
+      return validDate.getMonth() === currentMonth && validDate.getFullYear() === currentYear;
     });
 
     const paidToday = todayOrders.filter((o) => o.status === "Paid");
@@ -514,13 +549,16 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const paidMonth = monthOrders.filter((o) => o.status === "Paid");
     const monthlySales = paidMonth.reduce((sum, o) => sum + (o.total || 0), 0);
     const monthlyCost = paidMonth.reduce((sum, o) => sum + (o.cost || 0), 0);
+    // Calculate New Customers Today (Using order creation date, ensuring no duplicates by phone)
+    const todaysNewCustomerOrders = orders.filter(
+      (o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1
+    );
+    const newCustomersToday = new Set(todaysNewCustomerOrders.map(o => o.phone)).size;
 
     const pendingOrders = orders.filter((o) => o.status === "Pending");
     const pendingPaymentsAmount = pendingOrders.reduce((sum, o) => sum + (o.pending_payment || 0), 0);
 
-    const deliveriesTodayCount = orders.filter(
-      (o) => o.delivery_date.toLowerCase().includes("today") || new Date(o.date).toDateString() === todayStr
-    ).length;
+    const deliveriesTodayCount = todayOrders.length;
 
     const lowStockCount = inventory.filter((i) => i.stock <= i.minimum).length;
 
@@ -563,6 +601,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       monthlyProfit: monthlySales - monthlyCost,
       monthlyOrdersCount: monthOrders.length,
       newCustomersThisMonth: monthOrders.filter((o) => o.is_new_customer === 1).length,
+      newCustomersToday,
       lowStockCount,
       lowSellingCount,
       bestSellingProduct: maxSold > 0 ? bestSellingProduct : "None yet",

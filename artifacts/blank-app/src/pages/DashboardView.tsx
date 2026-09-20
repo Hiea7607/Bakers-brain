@@ -11,7 +11,7 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
       {/* Header Info */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-lg font-bold text-gray-800">1. Dashboard</h2>
+          <h2 className="text-lg font-bold text-gray-800">Dashboard</h2>
           <p className="text-[11px] text-gray-500">Today's Overview • {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</p>
         </div>
       </div>
@@ -60,7 +60,7 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
         >
           <div>
             <span className="text-[10px] text-gray-400 block font-medium">Upcoming Deliveries</span>
-            <span className="text-base font-bold text-gray-900">{stats.deliveriesTodayCount}</span>
+            <span className="text-base font-bold text-gray-900">{stats.upcomingDeliveriesCount}</span>
           </div>
           <span className="text-lg">🚚</span>
         </button>
@@ -94,31 +94,42 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
       <div className="bg-white p-4 rounded-xl shadow-xs border border-gray-100 space-y-2">
         <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider">Attention Needed</h3>
 
+        {/* New Customers Today Row */}
         <div
-          onClick={() => onNavigate("inventory")}
-          className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50 cursor-pointer hover:text-rose-600 transition"
+          onClick={() => onNavigate("reports")}
+          className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50 cursor-pointer hover:text-purple-600 transition"
         >
           <div className="flex items-center gap-2">
-            <span>🚨</span>
-            <span className="text-gray-700 font-medium">Running Out Ingredients</span>
+            <span>👤</span>
+            <span className="text-gray-700 font-medium">New Customers Today</span>
           </div>
-          <span className="text-rose-600 font-bold text-xs">{stats.lowStockCount} items ›</span>
+          <span className="text-purple-600 font-bold text-xs">
+            {stats.newCustomersToday || 0} joined ›
+          </span>
         </div>
 
-        <div className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50">
+        {/* Low-Selling Products Row */}
+        <div
+          onClick={() => onNavigate("products")}
+          className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50 cursor-pointer hover:text-rose-600 transition"
+        >
           <div className="flex items-center gap-2">
             <span>📉</span>
             <span className="text-gray-700 font-medium">Low-Selling Products</span>
           </div>
-          <span className="text-amber-600 font-bold text-xs">{stats.lowSellingCount} items ›</span>
+          <span className="text-amber-600 font-bold text-xs">{stats.lowSellingCount || 0} items ›</span>
         </div>
 
-        <div className="flex justify-between items-center text-xs py-1.5">
+        {/* Best-Selling Product Row */}
+        <div
+          onClick={() => onNavigate("products")}
+          className="flex justify-between items-center text-xs py-1.5 cursor-pointer hover:text-rose-600 transition"
+        >
           <div className="flex items-center gap-2">
             <span>🔥</span>
             <span className="text-gray-700 font-medium">Best-Selling Product</span>
           </div>
-          <span className="text-green-600 font-bold text-xs">{stats.bestSellingProduct}</span>
+          <span className="text-green-600 font-bold text-xs">{stats.bestSellingProduct || "None"} ›</span>
         </div>
       </div>
 
