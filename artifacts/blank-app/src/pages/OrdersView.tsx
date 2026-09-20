@@ -4,14 +4,28 @@ import { useBakery } from "../context/BakeryContext";
 
 export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ onNavigate }) => {
   const { orders, markOrderPaid, deleteOrder } = useBakery();
-  const [activeTab, setActiveTab] = useState<"Pending" | "Today" | "Completed" | "All">("Pending");
+  const [activeTab, setActiveTab] = useState<"Pending" | "Completed" | "All">("Pending");
 
   const todayStr = new Date().toDateString();
 
+  const isTodayOrder = (order: any) => {
+    if (!order.delivery_date) return new Date(order.date).toDateString() === todayStr;
+    const d = order.delivery_date.length === 10 
+      ? new Date(`${order.delivery_date}T00:00:00`) 
+      : new Date(order.delivery_date);
+    return d.toDateString() === todayStr;
+  };
+
   const filteredOrders = orders.filter((o) => {
-    if (activeTab === "Pending") return o.status === "Pending";
-    if (activeTab === "Completed") return o.status === "Paid";
-    if (activeTab === "Today") return new Date(o.date).toDateString() === todayStr;
+    if (activeTab === "Pending") {
+      return o.status === "Pending" && isTodayOrder(o);
+    }
+    if (activeTab === "Completed") {
+      return o.status === "Paid" && isTodayOrder(o);
+    }
+    if (activeTab === "All") {
+      return true;
+    }
     return true;
   });
 
@@ -19,7 +33,7 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
     <div className="space-y-4">
       {/* Top Bar */}
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-bold text-gray-800">3. Orders Manager</h2>
+        <h2 className="text-lg font-bold text-gray-800">Orders Manager</h2>
         <button
           onClick={() => onNavigate("neworder")}
           className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm"
@@ -30,7 +44,7 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
 
       {/* Tabs */}
       <div className="flex bg-gray-200 p-1 rounded-xl text-xs font-bold text-gray-600">
-        {(["Pending", "Today", "Completed", "All"] as const).map((tab) => (
+        {(["Pending", "Completed", "All"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -64,7 +78,7 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs font-bold text-rose-600">{order.id}</span>
                       <span className="font-bold text-sm text-gray-900">{order.customer}</span>
-                      {order.is_new_customer && (
+                      {order.is_new_customer === 1 && (
                         <span className="text-[9px] bg-green-50 text-green-700 font-bold px-1.5 py-0.5 rounded">
                           New
                         </span>

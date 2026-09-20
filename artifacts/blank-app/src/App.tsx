@@ -328,7 +328,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                   { id: "dashboard", label: "Dashboard", icon: "🏠" },
                   { id: "neworder", label: "New Order (Quick)", icon: "⚡" },
                   { id: "orders", label: "Orders Manager", icon: "📦" },
-                  { id: "products", label: "Products Catalog", icon: "🎂" },
+                  { id: "products", label: "Products Catalog", icon: "🍽️" },
                   { id: "inventory", label: "Raw Ingredients", icon: "🥣" },
                   { id: "reports", label: "Reports & Analytics", icon: "📊" },
                 ].map((item) => (
@@ -357,21 +357,21 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                   onClick={exportOrdersCSV} 
                   className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium"
                 >
-                  📦 1. Daily Data (CSV)
+                  📦 Daily Data (CSV)
                 </button>
 
                 <button
                   onClick={exportDatabaseJSON} 
                   className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium"
                 >
-                  📅 2. Monthly Data (JSON)
+                  📅 Monthly Data (JSON)
                 </button>
 
                 <button
                   onClick={handleSendDailySummary}
                   className="w-full text-left text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition"
                 >
-                  ✉️ 3. Daily Summary
+                  ✉️ Daily Summary
                 </button>
               </div>
             </div>
@@ -442,7 +442,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
               : "text-gray-400"
           }`}
         >
-          <span className="text-lg">🎂</span>
+          <span className="text-lg">🍽️</span>
           <span className="text-[10px]">Products</span>
         </button>
 

@@ -524,20 +524,26 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
 
-    // Helper to safely parse dates, avoiding the "null = 1970" bug and UTC timezone shifts
     const getEffectiveDate = (order: Order) => {
       if (!order.delivery_date) return new Date(order.date);
-      // Fix Javascript's quirk where "YYYY-MM-DD" is forced into UTC instead of local time
       if (order.delivery_date.length === 10) {
         return new Date(`${order.delivery_date}T00:00:00`);
       }
       return new Date(order.delivery_date);
     };
 
-    // 1. Calculate Today's Sales based on the DELIVERY date, not creation date
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+
     const todayOrders = orders.filter((o) => getEffectiveDate(o).toDateString() === todayStr);
 
-    // 2. Calculate Monthly Sales based on DELIVERY date
+    // Calculate Upcoming Deliveries (Strictly future dates after today)
+    const upcomingDeliveriesCount = orders.filter((o) => {
+      const d = new Date(getEffectiveDate(o));
+      d.setHours(0, 0, 0, 0);
+      return d > todayMidnight;
+    }).length;
+
     const monthOrders = orders.filter((o) => {
       const d = getEffectiveDate(o);
       return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
@@ -550,8 +556,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const paidMonth = monthOrders.filter((o) => o.status === "Paid");
     const monthlySales = paidMonth.reduce((sum, o) => sum + (o.total || 0), 0);
     const monthlyCost = paidMonth.reduce((sum, o) => sum + (o.cost || 0), 0);
-    
-    // Calculate New Customers Today (Using order creation date, ensuring no duplicates by phone)
+
     const todaysNewCustomerOrders = orders.filter(
       (o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1
     );
@@ -561,7 +566,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const pendingPaymentsAmount = pendingOrders.reduce((sum, o) => sum + (o.pending_payment || 0), 0);
 
     const deliveriesTodayCount = todayOrders.length;
-
     const lowStockCount = inventory.filter((i) => i.stock <= i.minimum).length;
 
     const productSoldMap: Record<string, number> = {};
@@ -596,6 +600,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       todaySales,
       todayProfit: todaySales - todayCost,
       todayOrdersCount: todayOrders.length,
+      upcomingDeliveriesCount, // <-- Added here so the dashboard card works
       deliveriesTodayCount,
       pendingPaymentsAmount,
       pendingOrdersCount: pendingOrders.length,

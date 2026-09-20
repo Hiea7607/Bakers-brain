@@ -130,7 +130,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void }> = ({ onOrder
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-bold text-gray-800">2. New Order (Quick)</h2>
+        <h2 className="text-lg font-bold text-gray-800">New Order (Quick)</h2>
         <span className="text-xs bg-rose-100 text-rose-700 font-bold px-2 py-0.5 rounded-full">Stage 1 Intake</span>
       </div>
 
