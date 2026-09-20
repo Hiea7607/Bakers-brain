@@ -33,7 +33,7 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
     <div className="space-y-4">
       {/* Top Bar */}
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-bold text-gray-800">3. Orders Manager</h2>
+        <h2 className="text-lg font-bold text-gray-800">Orders Manager</h2>
         <button
           onClick={() => onNavigate("neworder")}
           className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm"
