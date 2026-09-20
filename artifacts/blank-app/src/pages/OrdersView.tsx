@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { useBakery } from "../context/BakeryContext";
 
 export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ onNavigate }) => {
-  const { orders, markOrderPaid, deleteOrder } = useBakery();
+  const { orders, markOrderCompleted, deleteOrder } = useBakery();
   const [activeTab, setActiveTab] = useState<"Pending" | "Completed" | "All">("Pending");
 
   const todayStr = new Date().toDateString();
@@ -21,7 +21,8 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
       return o.status === "Pending" && isTodayOrder(o);
     }
     if (activeTab === "Completed") {
-      return o.status === "Paid" && isTodayOrder(o);
+      // Allows "Paid" for old database rows, "Completed" for new ones
+      return (o.status === "Completed" || o.status === "Paid") && isTodayOrder(o);
     }
     if (activeTab === "All") {
       return true;
@@ -111,14 +112,14 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                 <div className="flex justify-between items-center pt-1 text-xs">
                   {isPending ? (
                     <button
-                      onClick={() => markOrderPaid(order.id)}
+                      onClick={() => markOrderCompleted(order.id)}
                       className="bg-green-600 hover:bg-green-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs transition"
                     >
-                      ✓ Mark as Paid & Complete
+                      ✓ Mark as Delivered
                     </button>
                   ) : (
                     <span className="bg-green-100 text-green-700 font-bold px-2.5 py-1 rounded-full text-[11px]">
-                      ✓ Paid & Realized
+                      ✓ Delivered & Realized
                     </span>
                   )}
 

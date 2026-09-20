@@ -49,7 +49,7 @@ export type Order = {
   location: string;
   delivery_date: string;
   payment_method: string;
-  status: "Pending" | "Paid";
+  status: "Pending" | "Paid" | "Completed";
   is_new_customer: number;
 };
 
@@ -117,7 +117,7 @@ interface BakeryContextType {
   savePurchase: (purchase: Omit<Purchase, "id" | "date" | "total_cost">, minimum?: number) => Promise<void>;
   attachRecipeItem: (productCode: string, ingredientCode: string, quantity: number) => Promise<void>;
   createOrder: (parsed: ParsedOrder) => Promise<string>;
-  markOrderPaid: (orderId: string) => Promise<void>;
+  markOrderCompleted: (orderId: string) => Promise<void>;
   exportOrdersCSV: () => void;
   exportDatabaseJSON: () => void;
 }
@@ -405,7 +405,8 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const orderId = `BB-${dayOfMonth}#${nextOrderNum}`;
 
     const isNew = orders.some((o) => o.phone && o.phone === parsed.phone) ? 0 : 1;
-    const status = parsed.pendingPayment <= 0 ? "Paid" : "Pending";
+
+    const status = "Pending";
 
     const newOrder = {
       id: orderId,
@@ -463,13 +464,13 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return orderId;
   };
 
-  const markOrderPaid = async (orderId: string) => {
+  const markOrderCompleted = async (orderId: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     setOrders((prev) =>
       prev.map((o) =>
-        o.id === orderId ? { ...o, status: "Paid" as const, advance_paid: o.total, pending_payment: 0 } : o
+        o.id === orderId ? { ...o, status: "Completed" as const, advance_paid: o.total, pending_payment: 0 } : o
       )
     );
 
@@ -477,7 +478,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (target) {
       await supabase
         .from("orders")
-        .update({ status: "Paid", advance_paid: target.total, pending_payment: 0 })
+        .update({ status: "Completed", advance_paid: target.total, pending_payment: 0 })
         .eq("id", orderId)
         .eq("user_id", user.id);
     }
@@ -537,7 +538,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const todayOrders = orders.filter((o) => getEffectiveDate(o).toDateString() === todayStr);
 
-    // Calculate Upcoming Deliveries (Strictly future dates after today)
     const upcomingDeliveriesCount = orders.filter((o) => {
       const d = new Date(getEffectiveDate(o));
       d.setHours(0, 0, 0, 0);
@@ -549,21 +549,31 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
     });
 
-    const paidToday = todayOrders.filter((o) => o.status === "Paid");
-    const todaySales = paidToday.reduce((sum, o) => sum + (o.total || 0), 0);
-    const todayCost = paidToday.reduce((sum, o) => sum + (o.cost || 0), 0);
+    const completedToday = todayOrders.filter((o) => o.status === "Completed" || o.status === "Paid");
+    const todaySales = completedToday.reduce((sum, o) => sum + (o.total || 0), 0);
+    const todayCost = completedToday.reduce((sum, o) => sum + (o.cost || 0), 0);
 
-    const paidMonth = monthOrders.filter((o) => o.status === "Paid");
-    const monthlySales = paidMonth.reduce((sum, o) => sum + (o.total || 0), 0);
-    const monthlyCost = paidMonth.reduce((sum, o) => sum + (o.cost || 0), 0);
+    const completedMonth = monthOrders.filter((o) => o.status === "Completed" || o.status === "Paid");
+    const monthlySales = completedMonth.reduce((sum, o) => sum + (o.total || 0), 0);
+    const monthlyCost = completedMonth.reduce((sum, o) => sum + (o.cost || 0), 0);
 
     const todaysNewCustomerOrders = orders.filter(
       (o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1
     );
     const newCustomersToday = new Set(todaysNewCustomerOrders.map(o => o.phone)).size;
 
+    // 1. Keep this for your pendingOrdersCount statistic
     const pendingOrders = orders.filter((o) => o.status === "Pending");
-    const pendingPaymentsAmount = pendingOrders.reduce((sum, o) => sum + (o.pending_payment || 0), 0);
+
+    // 2. Filter active ones for today's cash flow
+    const activePendingOrders = pendingOrders.filter((o) => {
+      const d = new Date(getEffectiveDate(o));
+      d.setHours(0, 0, 0, 0);
+      return d <= todayMidnight; 
+    });
+
+    // 3. Declare pendingPaymentsAmount exactly ONCE
+    const pendingPaymentsAmount = activePendingOrders.reduce((sum, o) => sum + (o.pending_payment || 0), 0);
 
     const deliveriesTodayCount = todayOrders.length;
     const lowStockCount = inventory.filter((i) => i.stock <= i.minimum).length;
@@ -600,7 +610,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       todaySales,
       todayProfit: todaySales - todayCost,
       todayOrdersCount: todayOrders.length,
-      upcomingDeliveriesCount, // <-- Added here so the dashboard card works
+      upcomingDeliveriesCount, 
       deliveriesTodayCount,
       pendingPaymentsAmount,
       pendingOrdersCount: pendingOrders.length,
@@ -665,7 +675,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         savePurchase,
         attachRecipeItem,
         createOrder,
-        markOrderPaid,
+        markOrderCompleted,
         exportOrdersCSV,
         exportDatabaseJSON,
       }}

@@ -21,9 +21,9 @@ export function ClientLockoutView({ reason, businessName, onLogout }: ClientLock
 
         <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 text-xs text-gray-600 leading-relaxed">
           {reason === "locked" ? (
-            <span>Your account has been temporarily suspended by the administrator. Please contact support to restore access.</span>
+            <span>Your account has been temporarily suspended by the administrator.Please contact support via WhatsApp at +8801778012529 to restore access.</span>
           ) : (
-            <span>Your subscription plan has reached its expiry date. Please renew your subscription to continue managing your bakery operations.</span>
+            <span>Your subscription has expired.To restore access and continue managing your business operations, please contact support via WhatsApp at +8801778012529.</span>
           )}
         </div>
 
