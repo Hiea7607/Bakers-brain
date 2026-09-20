@@ -206,10 +206,10 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
 function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: () => void }) {
   const [currentPage, setCurrentPage] = useState(() => localStorage.getItem("bb_current_page") || "dashboard");
   const [showDrawer, setShowDrawer] = useState(false);
-  
+
   const businessName = localStorage.getItem("bb_business_name") || "Business Account";
   const userEmail = localStorage.getItem("bb_user_email") || "user@bakersbrain.com";
-  
+
   const { stats = {} as any, products = [], exportDatabaseJSON, exportOrdersCSV, fetchData } = useBakery();
 
   const targetMargin = Number(localStorage.getItem("bb_target_margin")) || 20;
@@ -218,6 +218,25 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
     const margin = p.price > 0 ? Math.round((netProfit / p.price) * 100) : 0;
     return netProfit < 0 || margin < targetMargin;
   }).length;
+
+  const handleSendDailySummary = () => {
+    const subject = encodeURIComponent(`Daily Summary: ${businessName} - ${new Date().toLocaleDateString()}`);
+    const body = encodeURIComponent(
+      `Daily Summary: ${businessName} - ${new Date().toLocaleDateString()}\n\n` +
+      `💰 Financials:\n` +
+      `Total Sales: ৳ ${stats.todaySales || 0}\n` +
+      `Net Profit: ৳ ${stats.todayProfit || 0}\n` +
+      `Pending Dues: ৳ ${stats.pendingPaymentsAmount || 0}\n\n` +
+      `📦 Operations:\n` +
+      `Orders Completed: ${stats.todayOrdersCount || 0}\n` +
+      `Best Seller Today: ${stats.bestSellingProduct || 'N/A'}\n` +
+      `Deliveries Due Tomorrow: ${stats.upcomingDeliveriesCount || 0}\n` +
+      `New Customers: ${stats.newCustomersToday || 0}\n\n` +
+      `⚠️ Kitchen Alerts:\n` +
+      `Low Stock Items: ${stats.lowStockCount || 0}`
+    );
+    window.open(`mailto:${userEmail}?subject=${subject}&body=${body}`, "_blank");
+  };
 
   useEffect(() => {
     fetchData();
@@ -229,7 +248,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col justify-between shadow-2xl relative pb-20 font-sans">
-      
+
       {/* Properly Wrapped Sticky Header */}
       <header className="bg-rose-600 text-white p-3 sticky top-0 z-30 shadow-md">
         <div className="flex items-center justify-between gap-2">
@@ -332,18 +351,27 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
               </nav>
 
               <div className="mt-6 pt-4 border-t space-y-2">
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-3">Data & Backup</p>
+                <p className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest px-3 mb-2">Data & Backup</p>
+
                 <button
-                  onClick={exportDatabaseJSON}
-                  className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2 rounded flex items-center gap-2"
+                  onClick={exportOrdersCSV} 
+                  className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium"
                 >
-                  💾 Export JSON Backup
+                  📦 1. Daily Data (CSV)
                 </button>
+
                 <button
-                  onClick={exportOrdersCSV}
-                  className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2 rounded flex items-center gap-2"
+                  onClick={exportDatabaseJSON} 
+                  className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium"
                 >
-                  📑 Download Orders (CSV)
+                  📅 2. Monthly Data (JSON)
+                </button>
+
+                <button
+                  onClick={handleSendDailySummary}
+                  className="w-full text-left text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition"
+                >
+                  ✉️ 3. Daily Summary
                 </button>
               </div>
             </div>
