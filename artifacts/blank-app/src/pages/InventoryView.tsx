@@ -1,9 +1,10 @@
 import { formatToUniversalDate } from "../lib/dateUtils";
 import React, { useState } from "react";
 import { useBakery, InventoryItem, Purchase } from "../context/BakeryContext";
+import { supabase } from "../lib/supabaseClient";
 
 export const InventoryView: React.FC = () => {
-  const { inventory, purchases, savePurchase, deleteInventoryItem, deductInventoryItem } = useBakery();
+  const { inventory, purchases, savePurchase, deleteInventoryItem, deductInventoryItem, fetchData } = useBakery();
 
   // Search & Modal State
   const [searchQuery, setSearchQuery] = useState("");
@@ -16,7 +17,7 @@ export const InventoryView: React.FC = () => {
   const [deductQty, setDeductQty] = useState("");
   const [deductReason, setDeductReason] = useState("Spillage / Waste");
 
-  // Purchase Form Fields
+  // Purchase/Edit Form Fields
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [unit, setUnit] = useState("kg");
@@ -26,15 +27,29 @@ export const InventoryView: React.FC = () => {
   const [source, setSource] = useState("");
   const [notes, setNotes] = useState("");
 
-  const handleOpenAdd = (existingItem?: InventoryItem) => {
+  // Mode 1: Edit Master Ingredient Details (Name, Unit, Min Alert)
+  const handleOpenEditMaster = (item: InventoryItem) => {
+    setIsEditing(true);
+    setCode(item.code);
+    setName(item.name);
+    setUnit(item.unit);
+    setMinimum(String(item.minimum));
+    setQuantity("");
+    setUnitPrice("");
+    setSource("");
+    setNotes("");
+    setShowAddModal(true);
+  };
+
+  // Mode 2: Add New Purchase / Restock Batch
+  const handleOpenAddPurchase = (existingItem?: InventoryItem) => {
+    setIsEditing(false);
     if (existingItem) {
-      setIsEditing(true);
       setCode(existingItem.code);
       setName(existingItem.name);
       setUnit(existingItem.unit);
       setMinimum(String(existingItem.minimum));
 
-      // Find the most recent purchase to pre-fill the rest of the information
       const itemPurchases = purchases.filter((p) => p.code === existingItem.code);
       const lastPurchase = itemPurchases[itemPurchases.length - 1]; 
 
@@ -47,16 +62,11 @@ export const InventoryView: React.FC = () => {
         setSource("");
         setNotes("");
       }
-
-      // Keep quantity empty so the user doesn't accidentally double-purchase
-      setQuantity("0"); 
+      setQuantity(""); 
     } else {
-      setIsEditing(false);
-      // Auto-generate sequence like ING01, ING02, etc.
       const nextNum = inventory.length + 1;
       const autoCode = `ING${String(nextNum).padStart(2, "0")}`;
       setCode(autoCode);
-
       setName("");
       setUnit("kg");
       setMinimum("2");
@@ -68,36 +78,48 @@ export const InventoryView: React.FC = () => {
     setShowAddModal(true);
   };
 
-  const handleSavePurchase = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Use quantity === "" so that entering "0" is allowed for edits
-    if (!code || !name || quantity === "" || !unitPrice) {
+
+    const formattedCode = code.toUpperCase().trim();
+    const formattedName = name.trim();
+
+    // If editing master info
+    if (isEditing) {
+      if (!formattedName) {
+        alert("Ingredient name cannot be empty.");
+        return;
+      }
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { error } = await supabase
+        .from("ingredients")
+        .update({ name: formattedName, unit, minimum: parseFloat(minimum) || 1 })
+        .eq("code", formattedCode)
+        .eq("user_id", user.id);
+
+      if (error) {
+        alert(`Failed to update ingredient: ${error.message}`);
+        return;
+      }
+
+      await fetchData();
+      setShowAddModal(false);
+      return;
+    }
+
+    // Otherwise, save purchase batch
+    if (!formattedCode || !formattedName || quantity === "" || !unitPrice) {
       alert("Please fill in Code, Name, Quantity, and Unit Price.");
       return;
     }
 
-    const formattedCode = code.toUpperCase().trim();
-    const formattedName = name.trim().toLowerCase();
-
-    // 1. CODE PROTECTION: Block saving if the code already belongs to a different ingredient
-    const existingItemByCode = inventory.find((item) => item.code === formattedCode);
-    if (existingItemByCode && existingItemByCode.name.toLowerCase() !== formattedName) {
-      alert(`Stop! The code "${formattedCode}" is already assigned to "${existingItemByCode.name}". Please type a unique code.`);
-      return;
-    }
-
-    // 2. SMART MERGE: Link to the original code if the name already exists
-    const existingItemByName = inventory.find(
-      (item) => item.name.toLowerCase() === formattedName
-    );
-
-    const finalCode = existingItemByName ? existingItemByName.code : formattedCode;
-    const finalName = existingItemByName ? existingItemByName.name : name.trim();
-
     savePurchase(
       {
-        code: finalCode,
-        name: finalName,
+        code: formattedCode,
+        name: formattedName,
         unit,
         quantity: parseFloat(quantity),
         unit_price: parseFloat(unitPrice),
@@ -133,19 +155,17 @@ export const InventoryView: React.FC = () => {
   const totalSpentOnItem = ingredientPurchases.reduce((sum, p) => sum + (p.total_cost || 0), 0);
 
   return (
-    /* APP WRAPPER: Locked tight, solid bg-gray-50 to seamlessly blend with the header */
     <div className="fixed top-[60px] bottom-[70px] left-0 right-0 flex flex-col w-full max-w-md mx-auto bg-gray-50 z-10">
 
       {/* --- PINNED HEADER CONTAINER --- */}
       <div className="flex-none bg-gray-50 px-4 pt-4 pb-2 z-20">
-        {/* Header & Add Button */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div>
             <h2 className="text-xl font-bold text-gray-900">Ingredients (Stock)</h2>
             <p className="text-xs text-gray-500">Tap item for history or manage deductions</p>
           </div>
           <button
-            onClick={() => handleOpenAdd()}
+            onClick={() => handleOpenAddPurchase()}
             className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl shadow-sm transition whitespace-nowrap"
           >
             + Add Purchase
@@ -163,7 +183,6 @@ export const InventoryView: React.FC = () => {
           />
         </div>
       </div>
-      {/* --- END PINNED HEADER --- */}
 
       {/* --- SCROLLABLE CARDS CONTAINER --- */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
@@ -196,11 +215,13 @@ export const InventoryView: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Stats Table */}
+                  {/* Stats Table with .toFixed(3) Precision */}
                   <div className="grid grid-cols-3 gap-2 bg-gray-50 p-3 rounded-xl text-center cursor-pointer" onClick={() => setSelectedIngredient(item)}>
                     <div>
                       <div className="text-xs text-gray-400">Stock</div>
-                      <div className={`text-sm font-bold ${isLowStock ? 'text-red-600' : 'text-gray-900'}`}>{item.stock} <span className="text-xs font-normal text-gray-500">{item.unit}</span></div>
+                      <div className={`text-sm font-bold ${isLowStock ? 'text-red-600' : 'text-gray-900'}`}>
+                        {Number(item.stock || 0).toFixed(3)} <span className="text-xs font-normal text-gray-500">{item.unit}</span>
+                      </div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-400">Avg Rate</div>
@@ -208,11 +229,13 @@ export const InventoryView: React.FC = () => {
                     </div>
                     <div>
                       <div className="text-xs text-gray-400">Min Alert</div>
-                      <div className="text-sm font-bold text-gray-900">{item.minimum} <span className="text-xs font-normal text-gray-500">{item.unit}</span></div>
+                      <div className="text-sm font-bold text-gray-900">
+                        {Number(item.minimum || 0).toFixed(3)} <span className="text-xs font-normal text-gray-500">{item.unit}</span>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Bottom Actions: History, Edit, Deduct */}
+                  {/* Bottom Actions */}
                   <div className="flex justify-between items-center pt-2">
                     <button
                       onClick={() => setSelectedIngredient(item)}
@@ -223,7 +246,7 @@ export const InventoryView: React.FC = () => {
 
                     <div className="flex items-center gap-4">
                       <button
-                        onClick={() => handleOpenAdd(item)}
+                        onClick={() => handleOpenEditMaster(item)}
                         className="text-xs text-gray-500 hover:text-gray-900 font-bold transition"
                       >
                         Edit
@@ -250,26 +273,15 @@ export const InventoryView: React.FC = () => {
       {/* Manual Waste / Damage Deduction Modal */}
       {showDeductModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <form
-            onSubmit={handleConfirmDeduction}
-            className="bg-white rounded-2xl max-w-sm w-full p-4 shadow-2xl space-y-3"
-          >
+          <form onSubmit={handleConfirmDeduction} className="bg-white rounded-2xl max-w-sm w-full p-4 shadow-2xl space-y-3">
             <div className="flex justify-between items-center border-b pb-2">
-              <h3 className="font-bold text-sm text-gray-800">
-                Manual Deduction: {showDeductModal.name}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowDeductModal(null)}
-                className="text-gray-400 hover:text-gray-600 font-bold"
-              >
-                ✕
-              </button>
+              <h3 className="font-bold text-sm text-gray-800">Manual Deduction: {showDeductModal.name}</h3>
+              <button type="button" onClick={() => setShowDeductModal(null)} className="text-gray-400 hover:text-gray-600 font-bold">✕</button>
             </div>
 
             <div className="bg-gray-50 p-2 rounded-lg text-xs text-gray-600 flex justify-between">
               <span>Current Stock:</span>
-              <strong>{showDeductModal.stock} {showDeductModal.unit}</strong>
+              <strong>{Number(showDeductModal.stock || 0).toFixed(3)} {showDeductModal.unit}</strong>
             </div>
 
             <div className="space-y-2 text-xs">
@@ -277,12 +289,12 @@ export const InventoryView: React.FC = () => {
                 <label className="text-[10px] font-bold text-gray-500">Deduct Quantity ({showDeductModal.unit})</label>
                 <input
                   type="number"
-                  step="0.01"
+                  step="0.001"
                   max={showDeductModal.stock}
                   required
                   value={deductQty}
                   onChange={(e) => setDeductQty(e.target.value)}
-                  placeholder="e.g. 0.5"
+                  placeholder="e.g. 0.500"
                   className="w-full border rounded-lg p-2 mt-0.5"
                 />
               </div>
@@ -302,10 +314,7 @@ export const InventoryView: React.FC = () => {
               </div>
             </div>
 
-            <button
-              type="submit"
-              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-lg text-xs transition shadow-sm"
-            >
+            <button type="submit" className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-lg text-xs transition shadow-sm">
               CONFIRM DEDUCTION
             </button>
           </form>
@@ -318,24 +327,17 @@ export const InventoryView: React.FC = () => {
           <div className="bg-white rounded-2xl max-w-md w-full p-4 shadow-2xl space-y-3 max-h-[85vh] flex flex-col">
             <div className="flex justify-between items-start border-b pb-2">
               <div>
-                <span className="text-[10px] font-mono font-bold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
-                  {selectedIngredient.code}
-                </span>
+                <span className="text-[10px] font-mono font-bold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{selectedIngredient.code}</span>
                 <h3 className="font-bold text-base text-gray-900 mt-1">{selectedIngredient.name} Purchase History</h3>
               </div>
-              <button
-                onClick={() => setSelectedIngredient(null)}
-                className="text-gray-400 hover:text-gray-600 text-lg font-bold"
-              >
-                ✕
-              </button>
+              <button onClick={() => setSelectedIngredient(null)} className="text-gray-400 hover:text-gray-600 text-lg font-bold">✕</button>
             </div>
 
             {/* Metrics */}
             <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2.5 rounded-xl text-center text-xs">
               <div>
                 <span className="text-[10px] text-gray-400 block">Stock</span>
-                <span className="font-bold text-gray-800">{selectedIngredient.stock} {selectedIngredient.unit}</span>
+                <span className="font-bold text-gray-800">{Number(selectedIngredient.stock || 0).toFixed(3)} {selectedIngredient.unit}</span>
               </div>
               <div>
                 <span className="text-[10px] text-gray-400 block">Avg Rate</span>
@@ -356,14 +358,13 @@ export const InventoryView: React.FC = () => {
                 ingredientPurchases.map((pur) => (
                   <div key={pur.id} className="bg-gray-50 p-2.5 rounded-lg border border-gray-100 text-xs flex flex-col gap-1.5">
                     <div className="flex justify-between items-center font-bold text-gray-800">
-                      <span>+{pur.quantity} {pur.unit} @ ৳{pur.unit_price}/{pur.unit}</span>
+                      <span>+{Number(pur.quantity || 0).toFixed(3)} {pur.unit} @ ৳{pur.unit_price}/{pur.unit}</span>
                       <span className="text-gray-900">৳ {pur.total_cost}</span>
                     </div>
                     <div className="flex flex-wrap justify-between items-center text-[10px] text-gray-500">
                       <span>Source: {pur.source || "Market"}</span>
                       <span>{formatToUniversalDate(pur.date)}</span>
                     </div>
-                    {/* Restored Notes Block */}
                     {pur.notes && (
                       <div className="text-[10px] text-gray-500 italic bg-white p-1.5 border border-gray-100 rounded">
                         <span className="font-medium text-gray-400">Note: </span> {pur.notes}
@@ -380,7 +381,7 @@ export const InventoryView: React.FC = () => {
                 onClick={() => {
                   const target = selectedIngredient;
                   setSelectedIngredient(null);
-                  handleOpenAdd(target);
+                  handleOpenAddPurchase(target);
                 }}
                 className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2 rounded-lg text-xs"
               >
@@ -402,24 +403,15 @@ export const InventoryView: React.FC = () => {
         </div>
       )}
 
-      {/* Add New Purchase / Edit Details Modal */}
+      {/* Add / Edit Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <form
-            onSubmit={handleSavePurchase}
-            className="bg-white rounded-2xl max-w-sm w-full p-4 shadow-2xl space-y-3"
-          >
+          <form onSubmit={handleSave} className="bg-white rounded-2xl max-w-sm w-full p-4 shadow-2xl space-y-3">
             <div className="flex justify-between items-center border-b pb-2">
               <h3 className="font-bold text-sm text-gray-800">
-                {isEditing ? "Edit Ingredient / Add Stock" : "Record Purchase / Stock"}
+                {isEditing ? "Edit Ingredient Details" : "Record Purchase / Stock"}
               </h3>
-              <button
-                type="button"
-                onClick={() => setShowAddModal(false)}
-                className="text-gray-400 hover:text-gray-600 font-bold"
-              >
-                ✕
-              </button>
+              <button type="button" onClick={() => setShowAddModal(false)} className="text-gray-400 hover:text-gray-600 font-bold">✕</button>
             </div>
 
             <div>
@@ -431,7 +423,7 @@ export const InventoryView: React.FC = () => {
                 onChange={(e) => setCode(e.target.value)}
                 placeholder="e.g. ING01"
                 className="w-full border rounded-lg p-2 mt-0.5 font-mono uppercase bg-gray-50"
-                disabled={isEditing} // Prevent changing code if editing
+                disabled={isEditing}
               />
             </div>
 
@@ -448,20 +440,35 @@ export const InventoryView: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500">Quantity</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
-                    placeholder="e.g. 3"
-                    className="w-full border rounded-lg p-2 mt-0.5"
-                  />
-                  {isEditing && <p className="text-[9px] text-gray-400 mt-1">Enter 0 to only update info.</p>}
+              {!isEditing && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-500">Quantity</label>
+                    <input
+                      type="number"
+                      step="0.001"
+                      required
+                      value={quantity}
+                      onChange={(e) => setQuantity(e.target.value)}
+                      placeholder="e.g. 3.000"
+                      className="w-full border rounded-lg p-2 mt-0.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-500">Unit (kg/litre/pcs)</label>
+                    <input
+                      type="text"
+                      required
+                      value={unit}
+                      onChange={(e) => setUnit(e.target.value)}
+                      placeholder="kg"
+                      className="w-full border rounded-lg p-2 mt-0.5"
+                    />
+                  </div>
                 </div>
+              )}
+
+              {isEditing && (
                 <div>
                   <label className="text-[10px] font-bold text-gray-500">Unit (kg/litre/pcs)</label>
                   <input
@@ -473,62 +480,65 @@ export const InventoryView: React.FC = () => {
                     className="w-full border rounded-lg p-2 mt-0.5"
                   />
                 </div>
-              </div>
+              )}
 
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Batch Rate / Unit Price (৳)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  value={unitPrice}
-                  onChange={(e) => setUnitPrice(e.target.value)}
-                  placeholder="e.g. 150"
-                  className="w-full border rounded-lg p-2 mt-0.5"
-                />
-              </div>
+              {!isEditing && (
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500">Batch Rate / Unit Price (৳)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={unitPrice}
+                    onChange={(e) => setUnitPrice(e.target.value)}
+                    placeholder="e.g. 150"
+                    className="w-full border rounded-lg p-2 mt-0.5"
+                  />
+                </div>
+              )}
 
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Supplier / Source</label>
-                <input
-                  type="text"
-                  value={source}
-                  onChange={(e) => setSource(e.target.value)}
-                  placeholder="e.g. New Market Wholesale"
-                  className="w-full border rounded-lg p-2 mt-0.5"
-                />
-              </div>
+              {!isEditing && (
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500">Supplier / Source</label>
+                  <input
+                    type="text"
+                    value={source}
+                    onChange={(e) => setSource(e.target.value)}
+                    placeholder="e.g. New Market Wholesale"
+                    className="w-full border rounded-lg p-2 mt-0.5"
+                  />
+                </div>
+              )}
 
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Notes (Optional)</label>
-                <input
-                  type="text"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="e.g. Brand name, expiry date, etc."
-                  className="w-full border rounded-lg p-2 mt-0.5"
-                />
-              </div>
+              {!isEditing && (
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500">Notes (Optional)</label>
+                  <input
+                    type="text"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="e.g. Brand name, expiry date"
+                    className="w-full border rounded-lg p-2 mt-0.5"
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="text-[10px] font-bold text-gray-500">Low Stock Alert At</label>
                 <input
                   type="number"
-                  step="0.01"
+                  step="0.001"
                   required
                   value={minimum}
                   onChange={(e) => setMinimum(e.target.value)}
-                  placeholder="e.g. 5"
+                  placeholder="e.g. 5.000"
                   className="w-full border rounded-lg p-2 mt-0.5 bg-rose-50"
                 />
               </div>
             </div>
 
-            <button
-              type="submit"
-              className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-lg text-xs shadow-md transition"
-            >
-              {isEditing ? "UPDATE / SAVE BATCH" : "SAVE PURCHASE BATCH"}
+            <button type="submit" className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-lg text-xs shadow-md transition">
+              {isEditing ? "UPDATE INGREDIENT DETAILS" : "SAVE PURCHASE BATCH"}
             </button>
           </form>
         </div>

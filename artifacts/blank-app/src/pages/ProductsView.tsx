@@ -9,22 +9,44 @@ interface RecipeItem {
 }
 
 export const ProductsView: React.FC = () => {
-  const { products, inventory, addProduct, deleteProduct, attachRecipeItem, fetchData } = useBakery();
+  const { products, inventory, addProduct, deleteProduct, attachRecipeItem, fetchData, shopSettings, updateShopSettings } = useBakery();
 
-  // Target Margin State
-  const [targetMargin, setTargetMargin] = useState(() => Number(localStorage.getItem("bb_target_margin")) || 20);
+  // New Cloud Sync Settings State
+  const [showSettings, setShowSettings] = useState(false);
+  const [localTargetMargin, setLocalTargetMargin] = useState(20);
+  const [localTaxRate, setLocalTaxRate] = useState(0);
+  const [localCurrency, setLocalCurrency] = useState("৳");
 
+  // Keep local form in sync with cloud settings when they load
   useEffect(() => {
-    localStorage.setItem("bb_target_margin", targetMargin.toString());
-  }, [targetMargin]);
+    if (shopSettings) {
+      setLocalTargetMargin(shopSettings.target_margin);
+      setLocalTaxRate(shopSettings.default_tax_rate);
+      setLocalCurrency(shopSettings.currency_symbol);
+    }
+  }, [shopSettings]);
+
+  const handleSaveSettings = async () => {
+    await updateShopSettings({
+      target_margin: localTargetMargin,
+      default_tax_rate: localTaxRate,
+      currency_symbol: localCurrency
+    });
+    setShowSettings(false);
+    alert("Settings saved to the cloud successfully!");
+  };
 
   // Search & Modal State
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+
+  // Cleaned Up Product Form State
   const [newCode, setNewCode] = useState("");
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("");
+  const [newUnit, setNewUnit] = useState("pic");
+  const [newShelfLife, setNewShelfLife] = useState("2");
 
   // Recipe Modal State
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -32,32 +54,19 @@ export const ProductsView: React.FC = () => {
   const [selectedIngCode, setSelectedIngCode] = useState("");
   const [recipeQty, setRecipeQty] = useState("");
   const [loadingRecipe, setLoadingRecipe] = useState(false);
-
-  // Dynamic Pricing State
   const [editPrice, setEditPrice] = useState("");
 
   // Load recipe rows from Supabase when opening modal
   useEffect(() => {
-    if (!selectedProduct) {
-      setRecipeItems([]);
-      return;
-    }
-
+    if (!selectedProduct) { setRecipeItems([]); return; }
     setEditPrice(String(selectedProduct.price));
 
     const loadRecipe = async () => {
       setLoadingRecipe(true);
-      const { data, error } = await supabase
-        .from("recipes")
-        .select("*")
-        .eq("product_code", selectedProduct.code);
-
-      if (!error && data) {
-        setRecipeItems(data as RecipeItem[]);
-      }
+      const { data, error } = await supabase.from("recipes").select("*").eq("product_code", selectedProduct.code);
+      if (!error && data) setRecipeItems(data as RecipeItem[]);
       setLoadingRecipe(false);
     };
-
     loadRecipe();
   }, [selectedProduct]);
 
@@ -68,6 +77,8 @@ export const ProductsView: React.FC = () => {
     setNewCode(autoCode);
     setNewName("");
     setNewPrice("");
+    setNewUnit("pic");
+    setNewShelfLife("2");
     setIsEditing(false);
     setShowAddModal(true);
   };
@@ -77,48 +88,35 @@ export const ProductsView: React.FC = () => {
     setNewCode(product.code);
     setNewName(product.name);
     setNewPrice(String(product.price));
+    setNewUnit((product as any).unit || "pic");
+    setNewShelfLife(String(product.shelf_life_days || 2));
     setIsEditing(true);
     setShowAddModal(true);
   };
 
-  // 1. Handle Save Product
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCode || !newName || !newPrice) return;
-
     const formattedCode = newCode.trim().toUpperCase();
+    const sLife = parseInt(newShelfLife, 10) || 2;
 
     if (isEditing) {
-      await supabase
-        .from("products")
-        .update({ name: newName.trim(), price: parseFloat(newPrice) })
-        .eq("code", formattedCode);
-
+      await supabase.from("products").update({ name: newName.trim(), price: parseFloat(newPrice), unit: newUnit, shelf_life_days: sLife }).eq("code", formattedCode);
       await fetchData();
       setShowAddModal(false);
       return;
     }
 
     const existingProduct = products.find((p) => p.code === formattedCode);
-    if (existingProduct) {
-      alert(`Stop! Product code "${formattedCode}" is already in use by "${existingProduct.name}". Please use a unique code.`);
-      return;
-    }
+    if (existingProduct) return alert(`Stop! Product code "${formattedCode}" is already in use by "${existingProduct.name}". Please use a unique code.`);
 
-    await addProduct({
-      code: formattedCode,
-      name: newName.trim(),
-      price: parseFloat(newPrice),
-    });
-
+    await addProduct({ code: formattedCode, name: newName.trim(), price: parseFloat(newPrice), unit: newUnit, shelf_life_days: sLife });
     setShowAddModal(false);
   };
 
-  // 2. Handle Attach Ingredient
   const handleAddIngredient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProduct || !selectedIngCode || !recipeQty) return;
-
     const qty = parseFloat(recipeQty);
     await attachRecipeItem(selectedProduct.code, selectedIngCode, qty);
 
@@ -131,26 +129,16 @@ export const ProductsView: React.FC = () => {
       return acc + (ing?.unit_cost || 0) * item.quantity;
     }, 0);
 
-    await supabase
-      .from("products")
-      .update({ cost: parseFloat(newTotalCost.toFixed(2)) })
-      .eq("code", selectedProduct.code);
-
+    await supabase.from("products").update({ cost: parseFloat(newTotalCost.toFixed(2)) }).eq("code", selectedProduct.code);
     setSelectedProduct(prev => prev ? { ...prev, cost: parseFloat(newTotalCost.toFixed(2)) } : null);
     setSelectedIngCode("");
     setRecipeQty("");
     await fetchData();
   };
 
-  // 3. Handle Remove Ingredient
   const handleRemoveIngredient = async (ingredientCode: string) => {
     if (!selectedProduct) return;
-
-    await supabase
-      .from("recipes")
-      .delete()
-      .eq("product_code", selectedProduct.code)
-      .eq("ingredient_code", ingredientCode);
+    await supabase.from("recipes").delete().eq("product_code", selectedProduct.code).eq("ingredient_code", ingredientCode);
 
     const updatedItems = recipeItems.filter((i) => i.ingredient_code !== ingredientCode);
     setRecipeItems(updatedItems);
@@ -160,37 +148,26 @@ export const ProductsView: React.FC = () => {
       return acc + (ing?.unit_cost || 0) * item.quantity;
     }, 0);
 
-    await supabase
-      .from("products")
-      .update({ cost: parseFloat(newTotalCost.toFixed(2)) })
-      .eq("code", selectedProduct.code);
-
+    await supabase.from("products").update({ cost: parseFloat(newTotalCost.toFixed(2)) }).eq("code", selectedProduct.code);
     setSelectedProduct(prev => prev ? { ...prev, cost: parseFloat(newTotalCost.toFixed(2)) } : null);
     await fetchData();
   };
 
-  // 4. Recipe-First Pricing Update
   const handleUpdatePrice = async () => {
     if (!selectedProduct) return;
     const newTargetPrice = parseFloat(editPrice);
     if (isNaN(newTargetPrice)) return;
-
-    await supabase
-      .from("products")
-      .update({ price: newTargetPrice })
-      .eq("code", selectedProduct.code);
-
+    await supabase.from("products").update({ price: newTargetPrice }).eq("code", selectedProduct.code);
     setSelectedProduct(prev => prev ? { ...prev, price: newTargetPrice } : null);
     await fetchData();
     alert("Selling price updated successfully!");
   };
 
-  // 5. Safe Filter Products (Prevents crash if a product name is missing in database)
-  const filteredProducts = products.filter(
-    (p) =>
-      (p.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (p.code || "").toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredProducts = products.filter((p) => (p.name || "").toLowerCase().includes(searchQuery.toLowerCase()) || (p.code || "").toLowerCase().includes(searchQuery.toLowerCase()));
+
+  // Universal reference for currency UI
+  const CURRENCY = shopSettings?.currency_symbol || "৳";
+  const TARGET_MARGIN = shopSettings?.target_margin || 20;
 
   return (
     <div className="fixed top-[60px] bottom-[70px] left-0 right-0 flex flex-col w-full max-w-md mx-auto bg-gray-50 z-10">
@@ -200,37 +177,71 @@ export const ProductsView: React.FC = () => {
         <div className="flex justify-between items-center gap-3">
           <div>
             <h2 className="text-xl font-bold text-gray-900">Products & Pricing</h2>
-            <p className="text-xs text-gray-500">Manage products and profit margins</p>
+            <p className="text-xs text-gray-500">Manage products, recipes, and rules</p>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="flex flex-col items-end bg-white px-2 py-1 rounded-xl border border-pink-200 shadow-sm">
-              <label className="text-[9px] font-bold text-pink-600 uppercase tracking-wider">Target %</label>
-              <input
-                type="number"
-                value={targetMargin}
-                onChange={(e) => setTargetMargin(Number(e.target.value))}
-                className="w-10 text-sm font-black text-gray-900 text-right focus:outline-none bg-transparent"
-              />
+
+            {/* --- GLOBAL SETTINGS DROPDOWN --- */}
+            <div className="relative">
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="bg-white border border-gray-200 hover:border-pink-300 text-gray-700 text-lg p-2 rounded-xl shadow-sm transition flex items-center justify-center h-[42px] w-[42px]"
+                title="Global Shop Settings"
+              >
+                ⚙️
+              </button>
+
+              {showSettings && (
+                <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-100 p-4 z-50">
+                  <div className="flex justify-between items-center mb-4 border-b pb-2">
+                    <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider">Cloud Settings</h4>
+                    <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-700 text-lg font-bold">✕</button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-pink-600 uppercase tracking-wider block mb-1">Target Margin (%)</label>
+                      <input
+                        type="number"
+                        value={localTargetMargin}
+                        onChange={(e) => setLocalTargetMargin(Number(e.target.value))}
+                        className="w-full text-sm border border-gray-200 rounded-lg p-2.5 font-black text-gray-900 focus:outline-none focus:border-pink-400 bg-gray-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-1">Shop Tax Rate (%)</label>
+                      <input
+                        type="number"
+                        value={localTaxRate}
+                        onChange={(e) => setLocalTaxRate(Number(e.target.value))}
+                        className="w-full text-sm border border-gray-200 rounded-lg p-2.5 font-black text-gray-900 focus:outline-none focus:border-blue-400 bg-gray-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1">Currency Symbol</label>
+                      <input
+                        type="text"
+                        value={localCurrency}
+                        onChange={(e) => setLocalCurrency(e.target.value)}
+                        className="w-full text-sm border border-gray-200 rounded-lg p-2.5 font-black text-gray-900 focus:outline-none focus:border-emerald-400 bg-gray-50"
+                      />
+                    </div>
+                    <button onClick={handleSaveSettings} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-2.5 rounded-lg text-xs shadow-sm transition">
+                      Save to Cloud
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            <button
-              onClick={handleOpenAdd}
-              className="bg-pink-600 hover:bg-pink-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition whitespace-nowrap"
-            >
+            <button onClick={handleOpenAdd} className="bg-pink-600 hover:bg-pink-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition h-[42px] whitespace-nowrap">
               + Add Product
             </button>
           </div>
         </div>
 
         <div className="relative mt-4">
-          <input
-            type="text"
-            placeholder="🔍 Search products by name or code..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:border-pink-500 shadow-sm"
-          />
+          <input type="text" placeholder="🔍 Search products by name or code..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:border-pink-500 shadow-sm" />
         </div>
       </div>
 
@@ -238,67 +249,57 @@ export const ProductsView: React.FC = () => {
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
         {filteredProducts.length === 0 ? (
           <div className="bg-white p-8 rounded-[20px] text-center text-gray-400 text-xs border border-gray-100 shadow-sm">
-            {products.length === 0 ? (
-              <>No products available. Tap <strong>+ Add Product</strong>.</>
-            ) : (
-              <>No matching products found for "{searchQuery}".</>
-            )}
+            {products.length === 0 ? (<>No products available. Tap <strong>+ Add Product</strong>.</>) : (<>No matching products found for "{searchQuery}".</>)}
           </div>
         ) : (
           <div className="flex flex-col gap-4">
             {filteredProducts.map((p) => {
               const netProfit = p.price - (p.cost || 0);
               const margin = p.price > 0 ? Math.round((netProfit / p.price) * 100) : 0;
-              // Unified Target Check!
-              const isBelowTarget = margin < targetMargin || netProfit < 0;
+              const isBelowTarget = margin < TARGET_MARGIN || netProfit < 0;
+              const unitDisplay = (p as any).unit || 'pic';
 
               return (
-                <div key={p.code} className={`bg-white rounded-2xl p-5 border shadow-sm space-y-4 transition-all w-full ${isBelowTarget ? 'border-red-400 bg-red-50/20' : 'border-gray-100'}`}>
+                <div key={p.code} className={`bg-white rounded-2xl p-5 border shadow-sm space-y-3 transition-all w-full ${isBelowTarget ? 'border-red-400 bg-red-50/20' : 'border-gray-100'}`}>
 
                   {/* Header */}
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${isBelowTarget ? 'bg-red-100 text-red-600' : 'bg-pink-50 text-pink-600'}`}>
-                        {p.code}
-                      </span>
-                      <h3 className="font-bold text-gray-800 text-lg mt-1">{p.name}</h3>
+                      <div className="flex gap-2 items-center mb-1">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${isBelowTarget ? 'bg-red-100 text-red-600' : 'bg-pink-50 text-pink-600'}`}>{p.code}</span>
+                        <span className="text-[9px] font-bold bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded uppercase">⏳ {p.shelf_life_days || 2} Days</span>
+                      </div>
+                      <h3 className="font-bold text-gray-800 text-lg leading-tight">{p.name}</h3>
                     </div>
-                    <span className={`text-xs font-black px-3 py-1.5 rounded-full ${isBelowTarget ? 'bg-red-500 text-white shadow-sm' : 'bg-green-50 text-green-700'}`}>
+                    <span className={`text-[10px] font-black px-2.5 py-1 rounded-full shadow-sm whitespace-nowrap mt-1 ${isBelowTarget ? 'bg-red-500 text-white' : 'bg-green-50 text-green-700'}`}>
                       {isBelowTarget ? `⚠️ ${margin}% (Low)` : `✓ ${margin}% Margin`}
                     </span>
                   </div>
 
-                  {/* Stats Table */}
-                  <div className="grid grid-cols-3 gap-2 bg-gray-50 p-3 rounded-xl text-center">
+                  {/* Stats Table with Unit Display */}
+                  <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2.5 rounded-xl text-center border border-gray-100 mt-2">
                     <div>
-                      <div className="text-xs text-gray-400">Price</div>
-                      <div className="text-sm font-bold text-gray-900">৳ {p.price}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-semibold">Price</div>
+                      <div className="text-sm font-bold text-gray-900">{CURRENCY} {p.price} <span className="text-[9px] text-gray-400 font-normal">/ {unitDisplay}</span></div>
+                    </div>
+                    <div className="border-l border-r border-gray-200">
+                      <div className="text-[10px] text-gray-500 uppercase font-semibold">Base Cost</div>
+                      <div className={`text-sm font-bold ${isBelowTarget ? 'text-red-600' : 'text-pink-600'}`}>{CURRENCY} {p.cost || 0}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-400">Base Cost</div>
-                      <div className={`text-sm font-bold ${isBelowTarget ? 'text-red-600' : 'text-pink-600'}`}>৳ {p.cost || 0}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-400">Profit</div>
-                      <div className={`text-sm font-bold ${isBelowTarget ? 'text-red-600' : 'text-green-600'}`}>৳ {netProfit.toFixed(2)}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-semibold">Profit</div>
+                      <div className={`text-sm font-bold ${isBelowTarget ? 'text-red-600' : 'text-green-600'}`}>{CURRENCY} {netProfit.toFixed(2)}</div>
                     </div>
                   </div>
 
                   {/* Bottom Actions */}
                   <div className="flex justify-between items-center pt-2">
-                    <button
-                      onClick={() => setSelectedProduct(p)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-lg text-xs font-medium hover:bg-gray-800 transition"
-                    >
+                    <button onClick={() => setSelectedProduct(p)} className="flex items-center gap-1.5 px-3 py-2 bg-gray-900 text-white rounded-lg text-[11px] font-bold hover:bg-black transition shadow-sm">
                       🥣 Recipe Builder
                     </button>
-                    <div className="flex items-center gap-4">
-                      <button onClick={() => handleOpenEdit(p)} className="text-xs text-gray-500 hover:text-gray-900 font-bold transition">
-                        Edit
-                      </button>
-                      <button onClick={() => deleteProduct(p.code)} className="text-xs text-red-500 hover:text-red-700 font-bold transition">
-                        Delete
-                      </button>
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => handleOpenEdit(p)} className="text-[11px] text-gray-500 hover:text-gray-900 font-bold transition px-2 py-1 bg-gray-100 rounded-md">Edit</button>
+                      <button onClick={() => { if(window.confirm(`Are you sure you want to delete ${p.name}?`)) deleteProduct(p.code); }} className="text-[11px] text-red-500 hover:text-red-700 font-bold transition px-2 py-1 bg-red-50 rounded-md">Delete</button>
                     </div>
                   </div>
                 </div>
@@ -308,27 +309,44 @@ export const ProductsView: React.FC = () => {
         )}
       </div>
 
-      {/* --- ADD/EDIT MODAL --- */}
+      {/* --- ADD/EDIT MODAL (CLEANED UP) --- */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
-            <h3 className="font-bold text-gray-900">{isEditing ? "Edit Product" : "Add New Product"}</h3>
-            <form onSubmit={handleSaveProduct} className="space-y-3">
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Product Code</label>
-                <input type="text" value={newCode} onChange={(e) => setNewCode(e.target.value)} className="w-full text-sm border rounded-lg p-2.5 font-mono uppercase bg-gray-50 disabled:text-gray-400" required disabled={isEditing} />
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h3 className="font-bold text-gray-900 text-lg border-b pb-2">{isEditing ? "Edit Product" : "Create New Product"}</h3>
+            <form onSubmit={handleSaveProduct} className="space-y-4">
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-1">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase">Code</label>
+                  <input type="text" value={newCode} onChange={(e) => setNewCode(e.target.value)} className="w-full text-sm border rounded-lg p-2 font-mono uppercase bg-gray-50 disabled:text-gray-400" required disabled={isEditing} />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase">Product Name</label>
+                  <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} className="w-full text-sm border rounded-lg p-2" required />
+                </div>
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Product Name</label>
-                <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} className="w-full text-sm border rounded-lg p-2.5" required />
+
+              <div className="grid grid-cols-3 gap-3 border-b border-gray-100 pb-4">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase">Price ({CURRENCY})</label>
+                  <input type="number" step="0.01" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} className="w-full text-sm font-black text-gray-900 border border-gray-300 rounded-lg p-2" required />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase">Unit</label>
+                  <select value={newUnit} onChange={(e) => setNewUnit(e.target.value)} className="w-full text-sm border rounded-lg p-2 bg-white text-gray-800">
+                    <option value="pic">pic</option><option value="Ltr">Ltr</option><option value="kg">kg</option><option value="gm">gm</option><option value="box">box</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-amber-600 uppercase">Shelf Life</label>
+                  <input type="number" value={newShelfLife} onChange={(e) => setNewShelfLife(e.target.value)} className="w-full text-sm font-bold text-amber-700 border border-amber-200 rounded-lg p-2 bg-amber-50 focus:border-amber-400" min="1" required title="Days before expiring" />
+                </div>
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-500">Target Selling Price (৳)</label>
-                <input type="number" step="0.01" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} className="w-full text-sm border rounded-lg p-2.5" required />
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setShowAddModal(false)} className="w-1/2 py-2.5 border rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-50">Cancel</button>
-                <button type="submit" className="w-1/2 py-2.5 bg-pink-600 hover:bg-pink-700 text-white rounded-lg text-sm font-bold transition">Save</button>
+
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => setShowAddModal(false)} className="w-1/3 py-3 bg-gray-100 rounded-xl text-xs font-bold text-gray-600 hover:bg-gray-200 transition">Cancel</button>
+                <button type="submit" className="w-2/3 py-3 bg-pink-600 hover:bg-pink-700 text-white rounded-xl text-sm font-bold shadow-md transition flex items-center justify-center gap-2">💾 Save Product</button>
               </div>
             </form>
           </div>
@@ -344,13 +362,13 @@ export const ProductsView: React.FC = () => {
                 <h3 className="font-bold text-lg text-gray-900">Recipe Builder</h3>
                 <p className="text-xs text-gray-500">{selectedProduct.name} ({selectedProduct.code})</p>
               </div>
-              <button onClick={() => setSelectedProduct(null)} className="text-gray-400 hover:text-gray-600 text-xl font-bold">✕</button>
+              <button onClick={() => setSelectedProduct(null)} className="text-gray-400 hover:text-gray-600 text-xl font-bold bg-gray-100 rounded-full w-8 h-8 flex items-center justify-center">✕</button>
             </div>
 
             <div className="bg-pink-50 border border-pink-100 rounded-xl p-3 flex justify-between items-center">
               <div>
                 <p className="text-[10px] font-bold text-pink-600 uppercase tracking-wider">Total Base Cost</p>
-                <p className="text-2xl font-black text-gray-900">৳ {selectedProduct.cost?.toFixed(2) || 0}</p>
+                <p className="text-2xl font-black text-gray-900">{CURRENCY} {selectedProduct.cost?.toFixed(2) || 0}</p>
               </div>
               <div className="text-right">
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Selling Price</p>
@@ -362,25 +380,25 @@ export const ProductsView: React.FC = () => {
             </div>
 
             <div className="space-y-2 pt-2">
-              <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Attached Ingredients</label>
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Attached Ingredients</label>
               {loadingRecipe ? (
                 <p className="text-xs text-gray-400 text-center py-4">Loading recipe...</p>
               ) : recipeItems.length === 0 ? (
-                <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-lg text-center border border-dashed">No ingredients added yet.</p>
+                <p className="text-xs text-gray-400 italic bg-gray-50 p-4 rounded-xl text-center border border-dashed border-gray-200">No ingredients added yet.</p>
               ) : (
                 <div className="divide-y divide-gray-100 bg-gray-50 rounded-xl p-2 border border-gray-200">
                   {recipeItems.map((item) => {
                     const ing = inventory.find((i) => i.code === item.ingredient_code);
                     const lineCost = (ing?.unit_cost || 0) * item.quantity;
                     return (
-                      <div key={item.ingredient_code} className="flex justify-between items-center py-2 px-2 text-sm">
+                      <div key={item.ingredient_code} className="flex justify-between items-center py-2.5 px-2 text-sm">
                         <div>
-                          <span className="font-medium text-gray-800">{ing?.name || item.ingredient_code}</span>
-                          <span className="text-xs text-gray-500 ml-2">({item.quantity} {ing?.unit || "unit"})</span>
+                          <span className="font-bold text-gray-800 text-[13px]">{ing?.name || item.ingredient_code}</span>
+                          <span className="text-[11px] text-gray-500 font-medium ml-2">({item.quantity} {ing?.unit || "unit"})</span>
                         </div>
                         <div className="flex items-center gap-3">
-                          <span className="font-semibold text-gray-700">৳ {lineCost.toFixed(2)}</span>
-                          <button onClick={() => handleRemoveIngredient(item.ingredient_code)} className="text-red-400 hover:text-red-600 text-xs font-bold px-1">✕</button>
+                          <span className="font-black text-gray-700">{CURRENCY} {lineCost.toFixed(2)}</span>
+                          <button onClick={() => handleRemoveIngredient(item.ingredient_code)} className="text-red-400 hover:text-red-600 bg-red-50 rounded-md text-xs font-bold px-2 py-1 transition">✕</button>
                         </div>
                       </div>
                     );
@@ -389,17 +407,17 @@ export const ProductsView: React.FC = () => {
               )}
             </div>
 
-            <form onSubmit={handleAddIngredient} className="space-y-3 pt-3 border-t">
-              <div className="grid grid-cols-2 gap-2">
-                <select value={selectedIngCode} onChange={(e) => setSelectedIngCode(e.target.value)} className="w-full text-sm border rounded-lg p-2 bg-white" required>
-                  <option value="">Select Item...</option>
+            <form onSubmit={handleAddIngredient} className="space-y-3 pt-4 border-t border-gray-100 mt-2">
+              <div className="grid grid-cols-3 gap-2">
+                <select value={selectedIngCode} onChange={(e) => setSelectedIngCode(e.target.value)} className="col-span-2 w-full text-xs font-bold border border-gray-300 rounded-xl p-2.5 bg-white text-gray-800" required>
+                  <option value="">Select Ingredient...</option>
                   {inventory.map((ing) => (
-                    <option key={ing.code} value={ing.code}>{ing.name} (৳{ing.unit_cost}/{ing.unit})</option>
+                    <option key={ing.code} value={ing.code}>{ing.name} ({CURRENCY}{ing.unit_cost}/{ing.unit})</option>
                   ))}
                 </select>
-                <input type="number" step="0.001" placeholder="Qty" value={recipeQty} onChange={(e) => setRecipeQty(e.target.value)} className="w-full text-sm border rounded-lg p-2" required />
+                <input type="number" step="0.001" placeholder="Qty" value={recipeQty} onChange={(e) => setRecipeQty(e.target.value)} className="col-span-1 w-full text-xs font-bold border border-gray-300 rounded-xl p-2.5 text-center" required />
               </div>
-              <button type="submit" className="w-full py-2 bg-pink-600 text-white rounded-lg font-medium text-sm hover:bg-pink-700 transition">+ Add to Recipe</button>
+              <button type="submit" className="w-full py-3 bg-gray-900 text-white rounded-xl font-bold text-xs hover:bg-black transition shadow-sm">+ Add to Recipe</button>
             </form>
           </div>
         </div>

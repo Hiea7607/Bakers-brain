@@ -1,43 +1,81 @@
 import { formatToUniversalDate } from "../lib/dateUtils";
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useBakery } from "../context/BakeryContext";
 
 export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ onNavigate }) => {
   const { orders, markOrderCompleted, deleteOrder } = useBakery();
-  const [activeTab, setActiveTab] = useState<"Pending" | "Completed" | "All">("Pending");
 
-  const todayStr = new Date().toDateString();
+  // Removed "Self" - Added "Upcoming" for future delivery routing
+  const [activeTab, setActiveTab] = useState<"Pending" | "Upcoming" | "Completed" | "All">("Pending");
 
-  const isTodayOrder = (order: any) => {
-    if (!order.delivery_date) return new Date(order.date).toDateString() === todayStr;
-    const d = order.delivery_date.length === 10 
-      ? new Date(`${order.delivery_date}T00:00:00`) 
-      : new Date(order.delivery_date);
-    return d.toDateString() === todayStr;
+  // ============================================================================
+  // MULTI-PRODUCT GROUPING ENGINE
+  // Groups individual database rows sharing the same ID into a single Order Card
+  // ============================================================================
+  const groupedOrders = useMemo(() => {
+    const groups: Record<string, any> = {};
+
+    orders.forEach((o) => {
+      // Failsafe: Hide internal stock transfers from sales history
+      if (o.customer.toLowerCase() === "self") return;
+
+      if (!groups[o.id]) {
+        groups[o.id] = { 
+            ...o, 
+            items: [], 
+            groupedTotal: 0, 
+            groupedAdvance: 0, 
+            groupedPending: 0 
+        };
+      }
+
+      // Bundle products together
+      groups[o.id].items.push({ name: o.product_name, qty: o.quantity });
+
+      // Re-sum the math across the grouped items
+      groups[o.id].groupedTotal += (o.total || 0);
+      groups[o.id].groupedAdvance += (o.advance_paid || 0);
+      groups[o.id].groupedPending += (o.pending_payment || 0);
+    });
+
+    return Object.values(groups);
+  }, [orders]);
+
+  // ============================================================================
+  // DATE-BASED ROUTING ENGINE
+  // Routes to "Pending" (Today) or "Upcoming" (Future) based on delivery date
+  // ============================================================================
+  const todayMidnight = new Date();
+  todayMidnight.setHours(0, 0, 0, 0);
+
+  const getEffectiveDate = (dateStr: string) => {
+    if (!dateStr) return new Date();
+    if (dateStr.length === 10) return new Date(`${dateStr}T00:00:00`);
+    return new Date(dateStr);
   };
 
-  const filteredOrders = orders.filter((o) => {
-    if (activeTab === "Pending") {
-      return o.status === "Pending" && isTodayOrder(o);
-    }
-    if (activeTab === "Completed") {
-      // Allows "Paid" for old database rows, "Completed" for new ones
-      return (o.status === "Completed" || o.status === "Paid") && isTodayOrder(o);
-    }
-    if (activeTab === "All") {
-      return true;
-    }
-    return true;
+  const filteredGroups = groupedOrders.filter((group) => {
+    const d = getEffectiveDate(group.delivery_date);
+    d.setHours(0, 0, 0, 0);
+
+    const isToday = d.getTime() === todayMidnight.getTime();
+    const isFuture = d.getTime() > todayMidnight.getTime();
+
+    if (activeTab === "Pending") return group.status === "Pending" && isToday;
+    if (activeTab === "Upcoming") return group.status === "Pending" && isFuture;
+    if (activeTab === "Completed") return group.status === "Completed" || group.status === "Paid";
+    if (activeTab === "All") return true;
+    return false; 
   });
 
   return (
     <div className="space-y-4">
       {/* Top Bar */}
       <div className="flex justify-between items-center">
-        <h2 className="text-lg font-bold text-gray-800">Orders Manager</h2>
+        <h2 className="text-lg font-bold text-gray-800">Orders & Dispatch</h2>
         <button
           onClick={() => onNavigate("neworder")}
-          className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm"
+          className="bg-gray-900 hover:bg-black text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm transition"
         >
           + New Order
         </button>
@@ -45,66 +83,80 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
 
       {/* Tabs */}
       <div className="flex bg-gray-200 p-1 rounded-xl text-xs font-bold text-gray-600">
-        {(["Pending", "Completed", "All"] as const).map((tab) => (
+        {(["Pending", "Upcoming", "Completed", "All"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-1.5 rounded-lg transition ${
-              activeTab === tab ? "bg-white text-rose-600 shadow-xs" : "hover:text-gray-900"
+            className={`flex-1 py-2 rounded-lg transition whitespace-nowrap ${
+              activeTab === tab ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-900"
             }`}
           >
-            {tab}
+            {tab === "Pending" ? "Today's Queue" : tab}
           </button>
         ))}
       </div>
 
-      {/* Orders List */}
-      <div className="space-y-3">
-        {filteredOrders.length === 0 ? (
-          <p className="text-xs text-gray-400 text-center py-8">No orders found in "{activeTab}".</p>
+      {/* Main Content Area */}
+      <div className="space-y-3 pb-8">
+        {filteredGroups.length === 0 ? (
+          <div className="bg-white rounded-xl border border-dashed border-gray-300 p-8 text-center mt-4">
+            <span className="text-2xl block mb-2">🎉</span>
+            <p className="text-xs text-gray-500 font-bold">No orders found in "{activeTab}".</p>
+          </div>
         ) : (
-          filteredOrders.map((order) => {
-            const isPending = order.status === "Pending";
+          filteredGroups.map((group) => {
+            const isPending = group.status === "Pending";
 
             return (
               <div
-                key={order.id}
-                className={`bg-white p-4 rounded-xl shadow-xs border transition space-y-2.5 ${
-                  isPending ? "border-amber-200" : "border-gray-100"
+                key={group.id}
+                className={`bg-white p-4 rounded-xl shadow-sm border transition space-y-3 ${
+                  isPending ? "border-blue-200" : "border-gray-200"
                 }`}
               >
-                {/* Header */}
-                <div className="flex justify-between items-start">
+                {/* Header (Customer Name & ID) */}
+                <div className="flex justify-between items-start border-b border-gray-100 pb-2">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-bold text-rose-600">{order.id}</span>
-                      <span className="font-bold text-sm text-gray-900">{order.customer}</span>
-                      {order.is_new_customer === 1 && (
-                        <span className="text-[9px] bg-green-50 text-green-700 font-bold px-1.5 py-0.5 rounded">
+                      <span className="font-mono text-xs font-bold text-blue-600">{group.id}</span>
+                      <span className="font-black text-sm text-gray-900 tracking-wide">{group.customer}</span>
+                      {group.is_new_customer === 1 && (
+                        <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
                           New
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-gray-400 mt-0.5">{order.phone || "No phone"}</p>
+                    <p className="text-xs text-gray-500 mt-0.5 font-medium">{group.phone || "No phone provided"}</p>
                   </div>
-                  <span className="text-[11px] text-gray-400 font-mono">{order.time}</span>
+                  <span className="text-[10px] text-gray-400 font-mono bg-gray-100 px-2 py-1 rounded-md">{group.time}</span>
                 </div>
 
-                {/* Body Details */}
-                <div className="bg-gray-50 p-2.5 rounded-lg text-xs space-y-1 text-gray-700">
-                  <div className="flex justify-between font-semibold text-gray-900">
-                    <span>🍽️ {order.product_name} × {order.quantity}</span>
-                    <span>৳ {order.total}</span>
+                {/* Body Details (Multi-Product Cart) */}
+                <div className="bg-gray-50 p-3 rounded-xl text-xs space-y-2 text-gray-700 border border-gray-100">
+
+                  {/* Bundled Items List */}
+                  <div className="space-y-1.5 mb-2">
+                    {group.items.map((item: any, idx: number) => (
+                       <div key={idx} className="flex justify-between items-center text-[11px] font-semibold text-gray-800">
+                         <span><span className="text-blue-600 font-black">{item.qty}x</span> {item.name}</span>
+                       </div>
+                    ))}
                   </div>
-                  <div className="flex justify-between text-[11px] text-gray-500">
-                    <span>📍 {order.location}</span>
-                    <span>📅 {formatToUniversalDate(order.delivery_date)}</span>
+
+                  <div className="flex justify-between text-[11px] text-gray-500 border-t border-gray-200 pt-2 mt-2">
+                    <span>📍 {group.location}</span>
+                    <span className="font-bold text-gray-700">📅 {formatToUniversalDate(group.delivery_date)}</span>
                   </div>
-                  <div className="flex justify-between text-[11px] pt-1 border-t border-gray-200">
-                    <span className="text-gray-500">Advance: ৳{order.advance_paid}</span>
-                    <span className={order.pending_payment > 0 ? "font-bold text-amber-600" : "text-green-600"}>
-                      Due: ৳{order.pending_payment}
-                    </span>
+
+                  {/* Financial Math */}
+                  <div className="flex justify-between items-center text-[11px] pt-2 mt-1 border-t border-gray-200">
+                    <span className="text-gray-500">Advance: ৳{group.groupedAdvance.toFixed(2)}</span>
+                    <div className="text-right">
+                       <span className="block text-gray-400 text-[9px] uppercase tracking-wider">Grand Total: ৳{group.groupedTotal.toFixed(2)}</span>
+                       <span className={`text-[13px] font-black ${group.groupedPending > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                         Due: ৳{group.groupedPending.toFixed(2)}
+                       </span>
+                    </div>
                   </div>
                 </div>
 
@@ -112,20 +164,24 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                 <div className="flex justify-between items-center pt-1 text-xs">
                   {isPending ? (
                     <button
-                      onClick={() => markOrderCompleted(order.id)}
-                      className="bg-green-600 hover:bg-green-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs transition"
+                      onClick={() => markOrderCompleted(group.id)}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition flex-1 mr-2"
                     >
-                      ✓ Mark as Delivered
+                      ✓ Mark Delivered & Realize
                     </button>
                   ) : (
-                    <span className="bg-green-100 text-green-700 font-bold px-2.5 py-1 rounded-full text-[11px]">
-                      ✓ Delivered & Realized
+                    <span className="bg-emerald-100 text-emerald-800 font-black px-3 py-1.5 rounded-lg text-[11px] flex-1 text-center mr-2">
+                      ✓ Complete & Realized
                     </span>
                   )}
 
                   <button
-                    onClick={() => deleteOrder(order.id)}
-                    className="text-red-400 hover:text-red-600 text-xs font-bold"
+                    onClick={() => {
+                       if (window.confirm("Are you sure you want to delete this entire order?")) {
+                           deleteOrder(group.id);
+                       }
+                    }}
+                    className="text-red-400 hover:text-red-600 text-xs font-bold px-3 py-2 bg-red-50 hover:bg-red-100 rounded-xl transition"
                   >
                     Delete
                   </button>

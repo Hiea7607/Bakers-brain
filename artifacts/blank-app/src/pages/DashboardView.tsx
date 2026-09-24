@@ -2,7 +2,8 @@ import React from "react";
 import { useBakery } from "../context/BakeryContext";
 
 export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = ({ onNavigate }) => {
-  const { stats, customers } = useBakery();
+  const { stats, customers, shopSettings } = useBakery();
+  const CURRENCY = shopSettings?.currency_symbol || "৳";
 
   const bestCustomer = customers.find((c) => c.tier === "Best") || customers[0];
 
@@ -21,7 +22,7 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
         <div className="bg-white p-3.5 rounded-xl shadow-xs border border-gray-100 flex flex-col justify-between">
           <div>
             <span className="text-[11px] font-medium text-gray-400">Today's Sales</span>
-            <p className="text-xl font-black text-gray-900 mt-0.5">৳ {stats.todaySales}</p>
+            <p className="text-xl font-black text-gray-900 mt-0.5">{CURRENCY} {stats.todaySales}</p>
           </div>
           <div className="mt-2 pt-1 border-t border-gray-50 flex items-center justify-between">
             <span className="text-[9px] text-gray-400">vs month</span>
@@ -31,11 +32,11 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
 
         <div className="bg-white p-3.5 rounded-xl shadow-xs border border-gray-100 flex flex-col justify-between">
           <div>
-            <span className="text-[11px] font-medium text-gray-400">Today's Profit</span>
-            <p className="text-xl font-black text-green-600 mt-0.5">৳ {stats.todayProfit}</p>
+            <span className="text-[11px] font-medium text-gray-400">Realized Profit</span>
+            <p className="text-xl font-black text-green-600 mt-0.5">{CURRENCY} {stats.todayProfit}</p>
           </div>
           <div className="mt-2 pt-1 border-t border-gray-50 flex items-center justify-between">
-            <span className="text-[9px] text-gray-400">vs month</span>
+            <span className="text-[9px] text-gray-400">completed only</span>
             <span className="text-[10px] font-mono text-green-600 font-bold"> ▂▅▇█</span>
           </div>
         </div>
@@ -70,8 +71,8 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
           className="bg-white p-3 rounded-xl shadow-xs border border-amber-200 bg-amber-50/40 flex items-center justify-between text-left hover:border-amber-400 transition"
         >
           <div>
-            <span className="text-[10px] text-amber-700 block font-bold">Pending Payments</span>
-            <span className="text-base font-black text-amber-900">৳ {stats.pendingPaymentsAmount}</span>
+            <span className="text-[10px] text-amber-700 block font-bold">Pending Dues</span>
+            <span className="text-base font-black text-amber-900">{CURRENCY} {stats.pendingPaymentsAmount}</span>
           </div>
           <span className="text-lg">⏳</span>
         </button>
@@ -94,7 +95,6 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
       <div className="bg-white p-4 rounded-xl shadow-xs border border-gray-100 space-y-2">
         <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider">Attention Needed</h3>
 
-        {/* New Customers Today Row */}
         <div
           onClick={() => onNavigate("reports")}
           className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50 cursor-pointer hover:text-purple-600 transition"
@@ -108,7 +108,6 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
           </span>
         </div>
 
-        {/* Low-Selling Products Row */}
         <div
           onClick={() => onNavigate("products")}
           className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50 cursor-pointer hover:text-rose-600 transition"
@@ -120,7 +119,6 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
           <span className="text-amber-600 font-bold text-xs">{stats.lowSellingCount || 0} items ›</span>
         </div>
 
-        {/* Best-Selling Product Row */}
         <div
           onClick={() => onNavigate("products")}
           className="flex justify-between items-center text-xs py-1.5 cursor-pointer hover:text-rose-600 transition"
@@ -133,26 +131,55 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
         </div>
       </div>
 
-      {/* This Month */}
+      {/* This Month (6-Box Grid) */}
       <div className="bg-white p-4 rounded-xl shadow-xs border border-gray-100 space-y-3">
         <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider">This Month</h3>
         <div className="grid grid-cols-2 gap-3 text-xs">
-          <div className="bg-gray-50 p-2.5 rounded-lg">
-            <span className="text-gray-400 text-[10px]">Monthly Sales</span>
-            <p className="font-bold text-sm text-gray-900 mt-0.5">৳ {stats.monthlySales}</p>
+
+          {/* Row 1: Finance */}
+          <div className="bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+            <span className="text-gray-500 text-[10px] font-bold">Monthly Sales</span>
+            <p className="font-black text-sm text-gray-900 mt-0.5">{CURRENCY} {stats.monthlySales}</p>
           </div>
-          <div className="bg-gray-50 p-2.5 rounded-lg">
-            <span className="text-gray-400 text-[10px]">Monthly Profit</span>
-            <p className="font-bold text-sm text-green-600 mt-0.5">৳ {stats.monthlyProfit}</p>
+          <div className="bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+            <span className="text-gray-500 text-[10px] font-bold">Monthly Profit</span>
+            <p className="font-black text-sm text-green-600 mt-0.5">{CURRENCY} {stats.monthlyProfit}</p>
           </div>
-          <div className="bg-gray-50 p-2.5 rounded-lg">
-            <span className="text-gray-400 text-[10px]">Total Orders</span>
-            <p className="font-bold text-sm text-gray-900 mt-0.5">{stats.monthlyOrdersCount}</p>
+
+          {/* Row 2: Volume & CRM */}
+          <div className="bg-gray-50 p-2.5 rounded-lg border border-gray-100 flex justify-between items-end">
+             <div>
+                <span className="text-gray-500 text-[10px] font-bold">Total Orders</span>
+                <p className="font-black text-sm text-gray-900 mt-0.5">{stats.monthlyOrdersCount}</p>
+             </div>
+             <span className="text-lg opacity-40">📦</span>
           </div>
-          <div className="bg-gray-50 p-2.5 rounded-lg">
-            <span className="text-gray-400 text-[10px]">New Customers</span>
-            <p className="font-bold text-sm text-purple-600 mt-0.5">{stats.newCustomersThisMonth}</p>
+          <div className="bg-purple-50 p-2.5 rounded-lg border border-purple-100 flex justify-between items-end">
+             <div>
+                <span className="text-purple-700 text-[10px] font-bold">New Customers</span>
+                <p className="font-black text-sm text-purple-700 mt-0.5">{stats.newCustomersThisMonth}</p>
+             </div>
+             <span className="text-lg opacity-40">👥</span>
           </div>
+
+          {/* Row 3: Waste & Performance */}
+          <div className="bg-red-50 p-2.5 rounded-lg border border-red-100 flex justify-between items-end">
+             <div>
+                <span className="text-red-700 text-[10px] font-bold">Food Waste (Loss)</span>
+                <p className="font-black text-sm text-red-600 mt-0.5">- {CURRENCY} {stats.monthlyLoss || 0}</p>
+             </div>
+             <span className="text-lg opacity-40">🗑️</span>
+          </div>
+          <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-100 flex justify-between items-end">
+             <div>
+                <span className="text-blue-700 text-[10px] font-bold">Avg Order Value</span>
+                <p className="font-black text-sm text-blue-700 mt-0.5">
+                  {CURRENCY} {stats.monthlyOrdersCount > 0 ? (stats.monthlySales / stats.monthlyOrdersCount).toFixed(2) : "0.00"}
+                </p>
+             </div>
+             <span className="text-lg opacity-40">🛒</span>
+          </div>
+
         </div>
       </div>
 

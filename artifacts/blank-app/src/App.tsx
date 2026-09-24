@@ -12,6 +12,7 @@ import { AdminPortalView } from "./AdminPortalView";
 import { ClientLockoutView } from "./ClientLockoutView";
 import { formatToUniversalDate } from "./lib/dateUtils";
 import { supabase } from "./lib/supabaseClient";
+import { InvoicesView } from './pages/InvoicesView';
 
 const queryClient = new QueryClient();
 
@@ -327,6 +328,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                 {[
                   { id: "dashboard", label: "Dashboard", icon: "🏠" },
                   { id: "neworder", label: "New Order (Quick)", icon: "⚡" },
+                  { id: "invoices", label: "Invoices & Dispatch", icon: "🧾" }, // <-- ADDED HERE
                   { id: "orders", label: "Orders Manager", icon: "📦" },
                   { id: "products", label: "Products Catalog", icon: "🍽️" },
                   { id: "inventory", label: "Raw Ingredients", icon: "🥣" },
@@ -393,6 +395,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
       <main className="flex-1 p-4 pt-5 overflow-y-auto">
         {currentPage === "dashboard" && <DashboardView onNavigate={setCurrentPage} />}
         {currentPage === "neworder" && <QuickOrderView onOrderSaved={() => setCurrentPage("orders")} />}
+        {currentPage === "invoices" && <InvoicesView />} {/* <-- ADDED HERE */}
         {currentPage === "orders" && <OrdersView onNavigate={setCurrentPage} />}
         {currentPage === "products" && <ProductsView />}
         {currentPage === "inventory" && <InventoryView />}
