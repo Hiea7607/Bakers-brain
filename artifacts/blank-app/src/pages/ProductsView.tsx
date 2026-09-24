@@ -11,13 +11,11 @@ interface RecipeItem {
 export const ProductsView: React.FC = () => {
   const { products, inventory, addProduct, deleteProduct, attachRecipeItem, fetchData, shopSettings, updateShopSettings } = useBakery();
 
-  // New Cloud Sync Settings State
   const [showSettings, setShowSettings] = useState(false);
   const [localTargetMargin, setLocalTargetMargin] = useState(20);
   const [localTaxRate, setLocalTaxRate] = useState(0);
   const [localCurrency, setLocalCurrency] = useState("৳");
 
-  // Keep local form in sync with cloud settings when they load
   useEffect(() => {
     if (shopSettings) {
       setLocalTargetMargin(shopSettings.target_margin);
@@ -36,19 +34,16 @@ export const ProductsView: React.FC = () => {
     alert("Settings saved to the cloud successfully!");
   };
 
-  // Search & Modal State
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
 
-  // Cleaned Up Product Form State
   const [newCode, setNewCode] = useState("");
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("");
   const [newUnit, setNewUnit] = useState("pic");
   const [newShelfLife, setNewShelfLife] = useState("2");
 
-  // Recipe Modal State
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [recipeItems, setRecipeItems] = useState<RecipeItem[]>([]);
   const [selectedIngCode, setSelectedIngCode] = useState("");
@@ -56,7 +51,6 @@ export const ProductsView: React.FC = () => {
   const [loadingRecipe, setLoadingRecipe] = useState(false);
   const [editPrice, setEditPrice] = useState("");
 
-  // Load recipe rows from Supabase when opening modal
   useEffect(() => {
     if (!selectedProduct) { setRecipeItems([]); return; }
     setEditPrice(String(selectedProduct.price));
@@ -70,7 +64,6 @@ export const ProductsView: React.FC = () => {
     loadRecipe();
   }, [selectedProduct]);
 
-  // Handle Opening Add Modal
   const handleOpenAdd = () => {
     const nextNum = products.length + 1;
     const autoCode = `PC${String(nextNum).padStart(2, "0")}`;
@@ -83,7 +76,6 @@ export const ProductsView: React.FC = () => {
     setShowAddModal(true);
   };
 
-  // Handle Opening Edit Modal
   const handleOpenEdit = (product: Product) => {
     setNewCode(product.code);
     setNewName(product.name);
@@ -108,7 +100,7 @@ export const ProductsView: React.FC = () => {
     }
 
     const existingProduct = products.find((p) => p.code === formattedCode);
-    if (existingProduct) return alert(`Stop! Product code "${formattedCode}" is already in use by "${existingProduct.name}". Please use a unique code.`);
+    if (existingProduct) return alert(`Product code "${formattedCode}" is in use. Use a unique code.`);
 
     await addProduct({ code: formattedCode, name: newName.trim(), price: parseFloat(newPrice), unit: newUnit, shelf_life_days: sLife });
     setShowAddModal(false);
@@ -165,7 +157,6 @@ export const ProductsView: React.FC = () => {
 
   const filteredProducts = products.filter((p) => (p.name || "").toLowerCase().includes(searchQuery.toLowerCase()) || (p.code || "").toLowerCase().includes(searchQuery.toLowerCase()));
 
-  // Universal reference for currency UI
   const CURRENCY = shopSettings?.currency_symbol || "৳";
   const TARGET_MARGIN = shopSettings?.target_margin || 20;
 
@@ -176,83 +167,36 @@ export const ProductsView: React.FC = () => {
       <div className="flex-none bg-gray-50 px-4 pt-4 pb-2 z-20">
         <div className="flex justify-between items-center gap-3">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">Products & Pricing</h2>
-            <p className="text-xs text-gray-500">Manage products, recipes, and rules</p>
+            <h2 className="text-xl font-bold text-gray-900">Products Catalog</h2>
+            <p className="text-xs text-gray-500">Manage recipes and pricing</p>
           </div>
 
           <div className="flex items-center gap-2">
-
-            {/* --- GLOBAL SETTINGS DROPDOWN --- */}
-            <div className="relative">
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className="bg-white border border-gray-200 hover:border-pink-300 text-gray-700 text-lg p-2 rounded-xl shadow-sm transition flex items-center justify-center h-[42px] w-[42px]"
-                title="Global Shop Settings"
-              >
-                ⚙️
-              </button>
-
-              {showSettings && (
-                <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-100 p-4 z-50">
-                  <div className="flex justify-between items-center mb-4 border-b pb-2">
-                    <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider">Cloud Settings</h4>
-                    <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-700 text-lg font-bold">✕</button>
-                  </div>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-[10px] font-bold text-pink-600 uppercase tracking-wider block mb-1">Target Margin (%)</label>
-                      <input
-                        type="number"
-                        value={localTargetMargin}
-                        onChange={(e) => setLocalTargetMargin(Number(e.target.value))}
-                        className="w-full text-sm border border-gray-200 rounded-lg p-2.5 font-black text-gray-900 focus:outline-none focus:border-pink-400 bg-gray-50"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-1">Shop Tax Rate (%)</label>
-                      <input
-                        type="number"
-                        value={localTaxRate}
-                        onChange={(e) => setLocalTaxRate(Number(e.target.value))}
-                        className="w-full text-sm border border-gray-200 rounded-lg p-2.5 font-black text-gray-900 focus:outline-none focus:border-blue-400 bg-gray-50"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1">Currency Symbol</label>
-                      <input
-                        type="text"
-                        value={localCurrency}
-                        onChange={(e) => setLocalCurrency(e.target.value)}
-                        className="w-full text-sm border border-gray-200 rounded-lg p-2.5 font-black text-gray-900 focus:outline-none focus:border-emerald-400 bg-gray-50"
-                      />
-                    </div>
-                    <button onClick={handleSaveSettings} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-2.5 rounded-lg text-xs shadow-sm transition">
-                      Save to Cloud
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
+            <button
+              onClick={() => setShowSettings(true)}
+              className="bg-white border border-gray-200 hover:border-pink-300 text-gray-700 text-lg p-2 rounded-xl shadow-sm transition flex items-center justify-center h-[42px] w-[42px]"
+            >
+              ⚙️
+            </button>
             <button onClick={handleOpenAdd} className="bg-pink-600 hover:bg-pink-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition h-[42px] whitespace-nowrap">
-              + Add Product
+              + Add
             </button>
           </div>
         </div>
 
         <div className="relative mt-4">
-          <input type="text" placeholder="🔍 Search products by name or code..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:border-pink-500 shadow-sm" />
+          <input type="text" placeholder="🔍 Search products..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:border-pink-500 shadow-sm" />
         </div>
       </div>
 
       {/* --- SCROLLABLE CARDS CONTAINER --- */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 pb-24">
         {filteredProducts.length === 0 ? (
           <div className="bg-white p-8 rounded-[20px] text-center text-gray-400 text-xs border border-gray-100 shadow-sm">
-            {products.length === 0 ? (<>No products available. Tap <strong>+ Add Product</strong>.</>) : (<>No matching products found for "{searchQuery}".</>)}
+            {products.length === 0 ? (<>No products available. Tap <strong>+ Add</strong>.</>) : (<>No matching products found.</>)}
           </div>
         ) : (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
             {filteredProducts.map((p) => {
               const netProfit = p.price - (p.cost || 0);
               const margin = p.price > 0 ? Math.round((netProfit / p.price) * 100) : 0;
@@ -260,46 +204,46 @@ export const ProductsView: React.FC = () => {
               const unitDisplay = (p as any).unit || 'pic';
 
               return (
-                <div key={p.code} className={`bg-white rounded-2xl p-5 border shadow-sm space-y-3 transition-all w-full ${isBelowTarget ? 'border-red-400 bg-red-50/20' : 'border-gray-100'}`}>
+                <div key={p.code} className={`bg-white rounded-xl p-3.5 border shadow-sm space-y-2.5 transition-all w-full ${isBelowTarget ? 'border-red-400 bg-red-50/20' : 'border-gray-100'}`}>
 
-                  {/* Header */}
+                  {/* Ultra-Mobile Friendly Header */}
                   <div className="flex justify-between items-start">
-                    <div>
-                      <div className="flex gap-2 items-center mb-1">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${isBelowTarget ? 'bg-red-100 text-red-600' : 'bg-pink-50 text-pink-600'}`}>{p.code}</span>
-                        <span className="text-[9px] font-bold bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded uppercase">⏳ {p.shelf_life_days || 2} Days</span>
+                    <div className="flex-1 pr-2 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="text-[9px] font-black bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{p.code}</span>
+                        <span className="text-[9px] font-bold text-amber-600">⏳ {p.shelf_life_days || 2}d</span>
                       </div>
-                      <h3 className="font-bold text-gray-800 text-lg leading-tight">{p.name}</h3>
+                      <h3 className="font-bold text-gray-900 text-sm truncate">{p.name}</h3>
                     </div>
-                    <span className={`text-[10px] font-black px-2.5 py-1 rounded-full shadow-sm whitespace-nowrap mt-1 ${isBelowTarget ? 'bg-red-500 text-white' : 'bg-green-50 text-green-700'}`}>
-                      {isBelowTarget ? `⚠️ ${margin}% (Low)` : `✓ ${margin}% Margin`}
-                    </span>
-                  </div>
-
-                  {/* Stats Table with Unit Display */}
-                  <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2.5 rounded-xl text-center border border-gray-100 mt-2">
-                    <div>
-                      <div className="text-[10px] text-gray-500 uppercase font-semibold">Price</div>
-                      <div className="text-sm font-bold text-gray-900">{CURRENCY} {p.price} <span className="text-[9px] text-gray-400 font-normal">/ {unitDisplay}</span></div>
-                    </div>
-                    <div className="border-l border-r border-gray-200">
-                      <div className="text-[10px] text-gray-500 uppercase font-semibold">Base Cost</div>
-                      <div className={`text-sm font-bold ${isBelowTarget ? 'text-red-600' : 'text-pink-600'}`}>{CURRENCY} {p.cost || 0}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-gray-500 uppercase font-semibold">Profit</div>
-                      <div className={`text-sm font-bold ${isBelowTarget ? 'text-red-600' : 'text-green-600'}`}>{CURRENCY} {netProfit.toFixed(2)}</div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-base font-black text-gray-900 leading-none">{CURRENCY}{p.price}</div>
+                      <div className="text-[9px] text-gray-400 mt-0.5 font-medium">/{unitDisplay}</div>
                     </div>
                   </div>
 
-                  {/* Bottom Actions */}
-                  <div className="flex justify-between items-center pt-2">
-                    <button onClick={() => setSelectedProduct(p)} className="flex items-center gap-1.5 px-3 py-2 bg-gray-900 text-white rounded-lg text-[11px] font-bold hover:bg-black transition shadow-sm">
+                  {/* Clean Single-Row Metrics */}
+                  <div className="flex items-center justify-between bg-gray-50 p-2 rounded-lg border border-gray-100">
+                    <div className="text-[10px]">
+                      <span className="text-gray-500 font-semibold mr-1">Cost:</span>
+                      <span className="font-bold text-gray-900">{CURRENCY}{p.cost || 0}</span>
+                    </div>
+                    <div className="text-[10px]">
+                      <span className="text-gray-500 font-semibold mr-1">Profit:</span>
+                      <span className="font-bold text-emerald-600">{CURRENCY}{netProfit.toFixed(2)}</span>
+                    </div>
+                    <div className={`text-[10px] font-black px-1.5 py-0.5 rounded ${isBelowTarget ? 'bg-red-500 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {margin}%
+                    </div>
+                  </div>
+
+                  {/* Button Row */}
+                  <div className="flex justify-between items-center pt-1">
+                    <button onClick={() => setSelectedProduct(p)} className="text-[10px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-2 rounded-lg transition shadow-sm">
                       🥣 Recipe Builder
                     </button>
-                    <div className="flex items-center gap-3">
-                      <button onClick={() => handleOpenEdit(p)} className="text-[11px] text-gray-500 hover:text-gray-900 font-bold transition px-2 py-1 bg-gray-100 rounded-md">Edit</button>
-                      <button onClick={() => { if(window.confirm(`Are you sure you want to delete ${p.name}?`)) deleteProduct(p.code); }} className="text-[11px] text-red-500 hover:text-red-700 font-bold transition px-2 py-1 bg-red-50 rounded-md">Delete</button>
+                    <div className="flex gap-2">
+                      <button onClick={() => handleOpenEdit(p)} className="text-[10px] text-gray-700 font-bold px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Edit</button>
+                      <button onClick={() => { if(window.confirm(`Delete ${p.name}?`)) deleteProduct(p.code); }} className="text-[10px] text-red-600 font-bold px-3 py-2 bg-red-50 hover:bg-red-100 rounded-lg transition">Delete</button>
                     </div>
                   </div>
                 </div>
@@ -309,9 +253,57 @@ export const ProductsView: React.FC = () => {
         )}
       </div>
 
-      {/* --- ADD/EDIT MODAL (CLEANED UP) --- */}
+      {/* --- MOBILE FIXED SETTINGS MODAL --- */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-2xl">
+            <div className="flex justify-between items-center mb-5 border-b border-gray-100 pb-3">
+              <div>
+                <h4 className="text-sm font-black text-gray-900 uppercase tracking-wider">Shop Settings</h4>
+                <p className="text-[10px] text-gray-500">Tax, Margin & Currency</p>
+              </div>
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-900 bg-gray-100 rounded-full w-8 h-8 flex items-center justify-center font-bold">✕</button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-bold text-pink-600 uppercase tracking-wider block mb-1">Target Margin (%)</label>
+                <input
+                  type="number"
+                  value={localTargetMargin}
+                  onChange={(e) => setLocalTargetMargin(Number(e.target.value))}
+                  className="w-full text-sm border border-gray-200 rounded-lg p-2.5 font-black text-gray-900 focus:outline-none focus:border-pink-400 bg-gray-50 text-center"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block mb-1">Shop Tax Rate (%)</label>
+                <input
+                  type="number"
+                  value={localTaxRate}
+                  onChange={(e) => setLocalTaxRate(Number(e.target.value))}
+                  className="w-full text-sm border border-gray-200 rounded-lg p-2.5 font-black text-gray-900 focus:outline-none focus:border-blue-400 bg-gray-50 text-center"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block mb-1">Currency Symbol</label>
+                <input
+                  type="text"
+                  value={localCurrency}
+                  onChange={(e) => setLocalCurrency(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg p-2.5 font-black text-gray-900 focus:outline-none focus:border-emerald-400 bg-gray-50 text-center"
+                />
+              </div>
+              <button onClick={handleSaveSettings} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-3 mt-2 rounded-xl text-xs shadow-md transition">
+                SAVE TO CLOUD
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- ADD/EDIT MODAL --- */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto">
             <h3 className="font-bold text-gray-900 text-lg border-b pb-2">{isEditing ? "Edit Product" : "Create New Product"}</h3>
             <form onSubmit={handleSaveProduct} className="space-y-4">
@@ -346,7 +338,7 @@ export const ProductsView: React.FC = () => {
 
               <div className="flex gap-2 pt-1">
                 <button type="button" onClick={() => setShowAddModal(false)} className="w-1/3 py-3 bg-gray-100 rounded-xl text-xs font-bold text-gray-600 hover:bg-gray-200 transition">Cancel</button>
-                <button type="submit" className="w-2/3 py-3 bg-pink-600 hover:bg-pink-700 text-white rounded-xl text-sm font-bold shadow-md transition flex items-center justify-center gap-2">💾 Save Product</button>
+                <button type="submit" className="w-2/3 py-3 bg-pink-600 hover:bg-pink-700 text-white rounded-xl text-sm font-bold shadow-md transition">💾 Save Product</button>
               </div>
             </form>
           </div>
@@ -355,8 +347,8 @@ export const ProductsView: React.FC = () => {
 
       {/* --- RECIPE BUILDER MODAL --- */}
       {selectedProduct && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start border-b pb-3">
               <div>
                 <h3 className="font-bold text-lg text-gray-900">Recipe Builder</h3>
@@ -391,10 +383,10 @@ export const ProductsView: React.FC = () => {
                     const ing = inventory.find((i) => i.code === item.ingredient_code);
                     const lineCost = (ing?.unit_cost || 0) * item.quantity;
                     return (
-                      <div key={item.ingredient_code} className="flex justify-between items-center py-2.5 px-2 text-sm">
-                        <div>
-                          <span className="font-bold text-gray-800 text-[13px]">{ing?.name || item.ingredient_code}</span>
-                          <span className="text-[11px] text-gray-500 font-medium ml-2">({item.quantity} {ing?.unit || "unit"})</span>
+                      <div key={item.ingredient_code} className="flex justify-between items-center py-2 px-1 text-sm">
+                        <div className="flex-1 min-w-0 pr-2">
+                          <div className="font-bold text-gray-800 text-xs truncate">{ing?.name || item.ingredient_code}</div>
+                          <div className="text-[10px] text-gray-500 font-medium">({item.quantity} {ing?.unit || "unit"})</div>
                         </div>
                         <div className="flex items-center gap-3">
                           <span className="font-black text-gray-700">{CURRENCY} {lineCost.toFixed(2)}</span>
