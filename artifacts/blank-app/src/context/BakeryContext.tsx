@@ -532,7 +532,77 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [orders, ingredients, products, wasteLogs]);
 
-  const exportOrdersCSV = () => {}; const exportDatabaseJSON = () => {};
+  // Helper function to force downloads on both mobile and desktop browsers
+  const triggerDownload = (content: string, mimeType: string, filename: string) => {
+    try {
+      const blob = new Blob([content], { type: mimeType });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link); // Crucial for mobile browsers
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download failed:", err);
+      alert("Your browser blocked the download. Please try from a different device.");
+    }
+  };
+
+  const exportOrdersCSV = () => {
+    if (orders.length === 0) {
+      alert("No orders available to export today.");
+      return;
+    }
+
+    // 1. Create CSV Headers
+    const headers = ["Order ID", "Date", "Customer", "Phone", "Product", "Quantity", "Total (৳)", "Status", "Delivery Date"];
+
+    // 2. Format Data (wrapping text in quotes to protect against commas)
+    const rows = orders.map((o) => {
+      const escape = (text: string | number | undefined) => `"${String(text || "").replace(/"/g, '""')}"`;
+      return [
+        escape(o.id),
+        escape(new Date(o.date).toLocaleDateString()),
+        escape(o.customer),
+        escape(o.phone),
+        escape(o.product_name),
+        o.quantity,
+        o.total,
+        escape(o.status),
+        escape(o.delivery_date)
+      ].join(",");
+    });
+
+    // 3. Combine and Trigger Download
+    const csvContent = [headers.join(","), ...rows].join("\n");
+    const filename = `Daily_Orders_${new Date().toISOString().split('T')[0]}.csv`;
+    triggerDownload(csvContent, "text/csv;charset=utf-8;", filename);
+  };
+
+  const exportDatabaseJSON = () => {
+    // 1. Bundle all the business data together
+    const fullBackup = {
+      exportDate: new Date().toISOString(),
+      shopSettings,
+      stats,
+      products,
+      ingredients,
+      orders,
+      purchases,
+      shelfStock,
+      wasteLogs,
+      customers
+    };
+
+    // 2. Convert to neatly formatted JSON string
+    const jsonString = JSON.stringify(fullBackup, null, 2);
+    const filename = `Monthly_Backup_${new Date().toISOString().split('T')[0]}.json`;
+
+    // 3. Trigger Download
+    triggerDownload(jsonString, "application/json", filename);
+  };
 
   return (
     <BakeryContext.Provider value={{ products, ingredients, orders, purchases, customers, shelfStock, wasteLogs, shopSettings, stats, fetchData, updateShopSettings, addProduct, deleteProduct, deleteIngredientItem, deleteOrder, deductIngredientItem, savePurchase, attachRecipeItem, createOrder, markOrderCompleted, logWaste, exportOrdersCSV, exportDatabaseJSON }}>
