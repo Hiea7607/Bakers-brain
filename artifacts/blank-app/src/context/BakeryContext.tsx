@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-export type InventoryItem = {
+export type IngredientItem = {
   code: string; name: string; unit: string; stock: number; minimum: number; unit_cost: number;
 };
 
@@ -56,14 +56,14 @@ export type ShopSettings = {
 };
 
 interface BakeryContextType {
-  products: Product[]; inventory: InventoryItem[]; orders: Order[]; purchases: Purchase[];
+  products: Product[]; ingredients : IngredientItem[]; orders: Order[]; purchases: Purchase[];
   customers: CustomerSummary[]; shelfStock: ShelfItem[]; wasteLogs: WasteLog[];
   shopSettings: ShopSettings | null; stats: any; 
   fetchData: () => Promise<void>;
   updateShopSettings: (updates: Partial<ShopSettings>) => Promise<void>;
   addProduct: (product: any) => Promise<void>; deleteProduct: (code: string) => Promise<void>;
-  deleteInventoryItem: (code: string) => Promise<void>; deleteOrder: (id: string) => Promise<void>;
-  deductInventoryItem: (code: string, quantity: number, reason: string) => Promise<void>;
+  deleteIngredientItem: (code: string) => Promise<void>; deleteOrder: (id: string) => Promise<void>;
+  deductIngredientItem: (code: string, quantity: number, reason: string) => Promise<void>;
   savePurchase: (purchase: any, minimum?: number) => Promise<void>;
   attachRecipeItem: (productCode: string, ingredientCode: string, quantity: number) => Promise<void>;
   createOrder: (parsed: ParsedOrder) => Promise<string>;
@@ -98,7 +98,7 @@ export const standardizeDateString = (dateStr: string) => {
 
 export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [products, setProducts] = useState<Product[]>([]);
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [ingredients, setIngredients] = useState<IngredientItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [shelfStock, setShelfStock] = useState<ShelfItem[]>([]);
@@ -118,7 +118,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ]);
 
       if (pRes.data) setProducts(pRes.data as Product[]);
-      if (iRes.data) setInventory(iRes.data as InventoryItem[]);
+      if (iRes.data) setIngredients(iRes.data as IngredientItem[]);
       if (oRes.data) setOrders(oRes.data as Order[]);
       if (purRes.data) setPurchases(purRes.data as Purchase[]);
 
@@ -163,15 +163,23 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const deleteProduct = async (code: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    await supabase.from("products").update({ is_deleted: true }).eq("code", code).eq("user_id", user.id);
-    setProducts((prev) => prev.filter((p) => p.code !== code));
+
+    // 1. CLEANUP GHOST DATA: Delete all recipe rows linked to this product first
+    await supabase.from("recipes").delete().eq("product_code", code).eq("user_id", user.id);
+
+    // 2. Delete the actual product
+    const { error } = await supabase.from("products").delete().eq("code", code).eq("user_id", user.id);
+
+    if (!error) {
+      setProducts((prev) => prev.filter((p) => p.code !== code));
+    }
   };
 
-  const deleteInventoryItem = async (code: string) => {
+  const deleteIngredientItem = async (code: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     await supabase.from("ingredients").update({ status: 'archived', is_deleted: true }).eq("code", code).eq("user_id", user.id);
-    setInventory((prev) => prev.filter((item) => item.code !== code));
+    setIngredients((prev) => prev.filter((item) => item.code !== code));
   };
 
   const deleteOrder = async (id: string) => {
@@ -181,13 +189,13 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setOrders((prev) => prev.filter((o) => o.id !== id));
   };
 
-  const deductInventoryItem = async (code: string, quantity: number, _reason: string) => {
+  const deductIngredientItem = async (code: string, quantity: number, _reason: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const currentItem = inventory.find((i) => i.code === code);
+    const currentItem = ingredients.find((i) => i.code === code);
     if (!currentItem) return;
     const newStock = Math.max(0, parseFloat((currentItem.stock - quantity).toFixed(3)));
-    setInventory((prev) => prev.map((item) => (item.code === code ? { ...item, stock: newStock } : item)));
+    setIngredients((prev) => prev.map((item) => (item.code === code ? { ...item, stock: newStock } : item)));
     await supabase.from("ingredients").update({ stock: newStock }).eq("code", code).eq("user_id", user.id);
   };
 
@@ -207,10 +215,10 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const totalQty = itemPurchases.reduce((acc, p) => acc + p.quantity, 0);
     const weightedAvgCost = totalQty > 0 ? parseFloat((totalSpent / totalQty).toFixed(2)) : purchase.unit_price;
 
-    const exists = inventory.find((i) => i.code === purchase.code);
+    const exists = ingredients.find((i) => i.code === purchase.code);
     const updatedStock = exists ? parseFloat((exists.stock + purchase.quantity).toFixed(3)) : purchase.quantity;
 
-    setInventory((prev) => {
+    setIngredients((prev) => {
       if (exists) return prev.map((item) => item.code === purchase.code ? { ...item, stock: updatedStock, unit_cost: weightedAvgCost } : item);
       return [...prev, { code: purchase.code, name: purchase.name, unit: purchase.unit, stock: purchase.quantity, minimum, unit_cost: weightedAvgCost }];
     });
@@ -226,7 +234,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (fullRecipe) {
           let recalculatedCost = 0;
           fullRecipe.forEach((item) => {
-            const ingCost = item.ingredient_code === purchase.code ? weightedAvgCost : (inventory.find((i) => i.code === item.ingredient_code)?.unit_cost || 0);
+            const ingCost = item.ingredient_code === purchase.code ? weightedAvgCost : (ingredients.find((i) => i.code === item.ingredient_code)?.unit_cost || 0);
             recalculatedCost += ingCost * item.quantity;
           });
           const roundedCost = parseFloat(recalculatedCost.toFixed(2));
@@ -294,10 +302,10 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (recipeData && recipeData.length > 0) {
           for (const rItem of recipeData) {
             const deduction = rItem.quantity * item.quantity;
-            const currentIng = inventory.find((i) => i.code === rItem.ingredient_code);
+            const currentIng = ingredients.find((i) => i.code === rItem.ingredient_code);
             if (currentIng) {
               const remainingStock = Math.max(0, parseFloat((currentIng.stock - deduction).toFixed(3)));
-              setInventory((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
+              setIngredients((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
               await supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id);
 
               // LOG THE DEDUCTION
@@ -377,10 +385,10 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (recipeData && recipeData.length > 0) {
           for (const rItem of recipeData) {
             const deduction = rItem.quantity * item.quantity;
-            const currentIng = inventory.find((i) => i.code === rItem.ingredient_code);
+            const currentIng = ingredients.find((i) => i.code === rItem.ingredient_code);
             if (currentIng) {
               const remainingStock = Math.max(0, parseFloat((currentIng.stock - deduction).toFixed(3)));
-              setInventory((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
+              setIngredients((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
               await supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id);
 
               // LOG THE DEDUCTION
@@ -495,16 +503,16 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       monthlySales: parseFloat(monthlySales.toFixed(2)), monthlyProfit: parseFloat((monthlySales - monthlyCost).toFixed(2)), monthlyOrdersCount: monthOrders.length,
       monthlyLoss: parseFloat(monthlyLoss.toFixed(2)), newCustomersThisMonth: monthOrders.filter((o) => o.is_new_customer === 1).length,
       newCustomersToday: new Set(orders.filter((o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1).map(o => o.phone)).size,
-      lowStockCount: inventory.filter((i) => i.stock <= i.minimum).length, lowSellingCount, bestSellingProduct: maxSold > 0 ? bestSellingProduct : "None yet",
-      mostConsumedIngredient: inventory[0]?.name ? `${inventory[0].name}` : "N/A", 
+      lowStockCount: ingredients.filter((i) => i.stock <= i.minimum).length, lowSellingCount, bestSellingProduct: maxSold > 0 ? bestSellingProduct : "None yet",
+      mostConsumedIngredient: ingredients [0]?.name ? `${ingredients [0].name}` : "N/A", 
       highestProfitProduct: highestMarginProduct !== "N/A" ? highestMarginProduct : "N/A"
     };
-  }, [orders, inventory, products, wasteLogs]);
+  }, [orders, ingredients, products, wasteLogs]);
 
   const exportOrdersCSV = () => {}; const exportDatabaseJSON = () => {};
 
   return (
-    <BakeryContext.Provider value={{ products, inventory, orders, purchases, customers, shelfStock, wasteLogs, shopSettings, stats, fetchData, updateShopSettings, addProduct, deleteProduct, deleteInventoryItem, deleteOrder, deductInventoryItem, savePurchase, attachRecipeItem, createOrder, markOrderCompleted, logWaste, exportOrdersCSV, exportDatabaseJSON }}>
+    <BakeryContext.Provider value={{ products, ingredients, orders, purchases, customers, shelfStock, wasteLogs, shopSettings, stats, fetchData, updateShopSettings, addProduct, deleteProduct, deleteIngredientItem, deleteOrder, deductIngredientItem, savePurchase, attachRecipeItem, createOrder, markOrderCompleted, logWaste, exportOrdersCSV, exportDatabaseJSON }}>
       {children}
     </BakeryContext.Provider>
   );

@@ -13,7 +13,7 @@ tags:
   - name: products
     description: Product operations
   - name: ingredients
-    description: Ingredient / inventory operations
+    description: Ingredient / ingredients  operations
 paths:
   /healthz:
     get:

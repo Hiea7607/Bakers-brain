@@ -9,7 +9,7 @@ interface RecipeItem {
 }
 
 export const ProductsView: React.FC = () => {
-  const { products, inventory, addProduct, deleteProduct, attachRecipeItem, fetchData, shopSettings, updateShopSettings } = useBakery();
+  const { products, ingredients, addProduct, deleteProduct, attachRecipeItem, fetchData, shopSettings, updateShopSettings } = useBakery();
 
   const [showSettings, setShowSettings] = useState(false);
   const [localTargetMargin, setLocalTargetMargin] = useState(20);
@@ -117,7 +117,7 @@ export const ProductsView: React.FC = () => {
     setRecipeItems(updatedItems);
 
     const newTotalCost = updatedItems.reduce((acc, item) => {
-      const ing = inventory.find((i) => i.code === item.ingredient_code);
+      const ing = ingredients.find((i) => i.code === item.ingredient_code);
       return acc + (ing?.unit_cost || 0) * item.quantity;
     }, 0);
 
@@ -136,7 +136,7 @@ export const ProductsView: React.FC = () => {
     setRecipeItems(updatedItems);
 
     const newTotalCost = updatedItems.reduce((acc, item) => {
-      const ing = inventory.find((i) => i.code === item.ingredient_code);
+      const ing = ingredients.find((i) => i.code === item.ingredient_code);
       return acc + (ing?.unit_cost || 0) * item.quantity;
     }, 0);
 
@@ -380,7 +380,7 @@ export const ProductsView: React.FC = () => {
               ) : (
                 <div className="divide-y divide-gray-100 bg-gray-50 rounded-xl p-2 border border-gray-200">
                   {recipeItems.map((item) => {
-                    const ing = inventory.find((i) => i.code === item.ingredient_code);
+                    const ing = ingredients.find((i) => i.code === item.ingredient_code);
                     const lineCost = (ing?.unit_cost || 0) * item.quantity;
                     return (
                       <div key={item.ingredient_code} className="flex justify-between items-center py-2 px-1 text-sm">
@@ -403,7 +403,7 @@ export const ProductsView: React.FC = () => {
               <div className="grid grid-cols-3 gap-2">
                 <select value={selectedIngCode} onChange={(e) => setSelectedIngCode(e.target.value)} className="col-span-2 w-full text-xs font-bold border border-gray-300 rounded-xl p-2.5 bg-white text-gray-800" required>
                   <option value="">Select Ingredient...</option>
-                  {inventory.map((ing) => (
+                  {ingredients.map((ing) => (
                     <option key={ing.code} value={ing.code}>{ing.name} ({CURRENCY}{ing.unit_cost}/{ing.unit})</option>
                   ))}
                 </select>

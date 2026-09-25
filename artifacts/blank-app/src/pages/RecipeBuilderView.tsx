@@ -7,7 +7,7 @@ export const RecipeBuilderView: React.FC<{ productCode: string; onBack: () => vo
 }) => {
   const context = useBakery() as any;
   const products = context.products ?? [];
-  const inventory = context.inventory ?? [];
+  const ingredients  = context.ingredients  ?? [];
   const recipes: Record<string, Record<string, number>> = context.recipes ?? {};
   const addOrUpdateRecipeIngredient =
     context.addOrUpdateRecipeIngredient ?? context.attachRecipeItem ?? (() => {});
@@ -50,7 +50,7 @@ export const RecipeBuilderView: React.FC<{ productCode: string; onBack: () => vo
         ) : (
           <div className="divide-y divide-gray-100">
             {recipeEntries.map(([ingCode, qty]) => {
-              const ing = inventory.find((i: any) => i.code === ingCode);
+              const ing = ingredients.find((i: any) => i.code === ingCode);
               return (
                 <div key={ingCode} className="py-2.5 flex justify-between items-center text-xs">
                   <div>
@@ -83,7 +83,7 @@ export const RecipeBuilderView: React.FC<{ productCode: string; onBack: () => vo
               className="border p-2 rounded text-xs flex-1 bg-gray-50"
             >
               <option value="">Select Raw Material</option>
-              {inventory
+              {ingredients 
                 .filter((i: any) => !(i.code in recipe))
                 .map((i: any) => (
                   <option key={i.code} value={i.code}>

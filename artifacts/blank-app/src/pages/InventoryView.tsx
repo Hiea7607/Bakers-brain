@@ -1,19 +1,19 @@
 import { formatToUniversalDate } from "../lib/dateUtils";
 import React, { useState } from "react";
-import { useBakery, InventoryItem, Purchase } from "../context/BakeryContext";
+import { useBakery, IngredientItem, Purchase } from "../context/BakeryContext";
 import { supabase } from "../lib/supabaseClient";
 
 export const InventoryView: React.FC = () => {
-  const { inventory, purchases, savePurchase, deleteInventoryItem, deductInventoryItem, fetchData } = useBakery();
+  const { ingredients, purchases, savePurchase, deleteIngredient, deductIngredient, fetchData } = useBakery();
 
   // Search & Modal State
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [selectedIngredient, setSelectedIngredient] = useState<InventoryItem | null>(null);
+  const [selectedIngredient, setSelectedIngredient] = useState<IngredientItem | null>(null);
 
   // Manual deduction state
-  const [showDeductModal, setShowDeductModal] = useState<InventoryItem | null>(null);
+  const [showDeductModal, setShowDeductModal] = useState<IngredientItem | null>(null);
   const [deductQty, setDeductQty] = useState("");
   const [deductReason, setDeductReason] = useState("Spillage / Waste");
 
@@ -28,7 +28,7 @@ export const InventoryView: React.FC = () => {
   const [notes, setNotes] = useState("");
 
   // Mode 1: Edit Master Ingredient Details (Name, Unit, Min Alert)
-  const handleOpenEditMaster = (item: InventoryItem) => {
+  const handleOpenEditMaster = (item: IngredientItem) => {
     setIsEditing(true);
     setCode(item.code);
     setName(item.name);
@@ -42,7 +42,7 @@ export const InventoryView: React.FC = () => {
   };
 
   // Mode 2: Add New Purchase / Restock Batch
-  const handleOpenAddPurchase = (existingItem?: InventoryItem) => {
+  const handleOpenAddPurchase = (existingItem?: IngredientItem) => {
     setIsEditing(false);
     if (existingItem) {
       setCode(existingItem.code);
@@ -64,7 +64,7 @@ export const InventoryView: React.FC = () => {
       }
       setQuantity(""); 
     } else {
-      const nextNum = inventory.length + 1;
+      const nextNum = ingredients.length + 1;
       const autoCode = `ING${String(nextNum).padStart(2, "0")}`;
       setCode(autoCode);
       setName("");
@@ -136,13 +136,13 @@ export const InventoryView: React.FC = () => {
     e.preventDefault();
     if (!showDeductModal || !deductQty) return;
 
-    await deductInventoryItem(showDeductModal.code, parseFloat(deductQty), deductReason);
+    await deductIngredient(showDeductModal.code, parseFloat(deductQty), deductReason);
     setShowDeductModal(null);
     setDeductQty("");
   };
 
-  // Filter inventory based on search query
-  const filteredInventory = inventory.filter(
+  // Filter ingredients based on search query
+  const filteredIngredients = ingredients.filter(
     (item) =>
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.code.toLowerCase().includes(searchQuery.toLowerCase())
@@ -186,9 +186,9 @@ export const InventoryView: React.FC = () => {
 
       {/* --- SCROLLABLE CARDS CONTAINER --- */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
-        {filteredInventory.length === 0 ? (
+        {filteredIngredients.length === 0 ? (
           <div className="bg-white p-8 rounded-[20px] text-center text-gray-400 text-xs border border-gray-100 shadow-sm">
-            {inventory.length === 0 ? (
+            {ingredients.length === 0 ? (
               <>No ingredients in stock. Tap <strong>+ Add Purchase</strong>.</>
             ) : (
               <>No matching ingredients found for "{searchQuery}".</>
@@ -196,7 +196,7 @@ export const InventoryView: React.FC = () => {
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {filteredInventory.map((item) => {
+            {filteredIngredients.map((item) => {
               const isLowStock = item.stock <= item.minimum;
 
               return (
@@ -309,7 +309,7 @@ export const InventoryView: React.FC = () => {
                   <option value="Damage / Expired">Damage / Expired</option>
                   <option value="Spillage / Waste">Spillage / Waste</option>
                   <option value="Testing Batch">Testing Batch</option>
-                  <option value="Inventory Adjustment">Inventory Adjustment</option>
+                  <option value="Ingredient Adjustment">Ingredient Adjustment</option>
                 </select>
               </div>
             </div>
@@ -390,7 +390,7 @@ export const InventoryView: React.FC = () => {
               <button
                 onClick={() => {
                   if (window.confirm(`Delete ${selectedIngredient.name}?`)) {
-                    deleteInventoryItem(selectedIngredient.code);
+                    deleteIngredient(selectedIngredient.code);
                     setSelectedIngredient(null);
                   }
                 }}

@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 
 export const ReportsView: React.FC<{ onNavigate: (page: string) => void }> = () => {
-  const { orders, inventory, purchases, customers, shopSettings } = useBakery();
+  const { orders, ingredients, purchases, customers, shopSettings } = useBakery();
   const CURRENCY = shopSettings?.currency_symbol || "৳";
 
   const [activeTab, setActiveTab] = useState<"BI Hub" | "Customers">("BI Hub");
@@ -13,10 +13,10 @@ export const ReportsView: React.FC<{ onNavigate: (page: string) => void }> = () 
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<any | null>(null);
 
   useMemo(() => {
-    if (!selectedIngredient && inventory.length > 0) {
-      setSelectedIngredient(inventory[0].code);
+    if (!selectedIngredient && ingredients.length > 0) {
+      setSelectedIngredient(ingredients [0].code);
     }
-  }, [inventory, selectedIngredient]);
+  }, [ingredients, selectedIngredient]);
 
   const revenueData = useMemo(() => {
     const dataMap = new Map();
@@ -133,7 +133,7 @@ export const ReportsView: React.FC<{ onNavigate: (page: string) => void }> = () 
                 value={selectedIngredient}
                 onChange={(e) => setSelectedIngredient(e.target.value)}
               >
-                {inventory.map(item => (
+                {ingredients.map(item => (
                   <option key={item.code} value={item.code}>{item.name}</option>
                 ))}
               </select>
