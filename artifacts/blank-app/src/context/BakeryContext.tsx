@@ -280,8 +280,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!user) throw new Error("Unauthorized");
     const now = new Date();
 
-    // Create an array to hold our audit trail logs
     const newDeductions: any[] = [];
+    // NEW: We will queue up all our database updates here to fire them all at once!
+    const dbPromises: Promise<any>[] = []; 
 
     if (parsed.customer === "Self") {
       const newShelfItems: any[] = [];
@@ -305,8 +306,14 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             const currentIng = ingredients.find((i) => i.code === rItem.ingredient_code);
             if (currentIng) {
               const remainingStock = Math.max(0, parseFloat((currentIng.stock - deduction).toFixed(3)));
+
+              // Update React instantly
               setIngredients((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
-              await supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id);
+
+              // NEW: Queue the database update instead of pausing the loop!
+              dbPromises.push(
+                supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id)
+              );
 
               // LOG THE DEDUCTION
               newDeductions.push({
@@ -323,6 +330,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
 
+      // NEW: Fire all queued ingredient updates instantly and concurrently!
+      if (dbPromises.length > 0) await Promise.all(dbPromises);
+      // Bulk insert deductions log
       if (newDeductions.length > 0) await supabase.from("deductions").insert(newDeductions);
       return "SHELF-STOCKED";
     }
@@ -375,8 +385,13 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             const deductAmount = Math.min(batch.quantity, qtyToDeduct);
             qtyToDeduct -= deductAmount;
             const newQty = batch.quantity - deductAmount;
+
             setShelfStock(prev => prev.map(s => s.id === batch.id ? { ...s, quantity: newQty } : s));
-            await supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id);
+
+            // Queue shelf update
+            dbPromises.push(
+              supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id)
+            );
         }
       }
     } else {
@@ -388,8 +403,13 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             const currentIng = ingredients.find((i) => i.code === rItem.ingredient_code);
             if (currentIng) {
               const remainingStock = Math.max(0, parseFloat((currentIng.stock - deduction).toFixed(3)));
+
               setIngredients((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
-              await supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id);
+
+              // Queue ingredient update
+              dbPromises.push(
+                supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id)
+              );
 
               // LOG THE DEDUCTION
               newDeductions.push({
@@ -407,7 +427,10 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }
 
+    // NEW: Fire all queued ingredient and shelf updates concurrently!
+    if (dbPromises.length > 0) await Promise.all(dbPromises);
     if (newDeductions.length > 0) await supabase.from("deductions").insert(newDeductions);
+
     return orderId;
   };
 
