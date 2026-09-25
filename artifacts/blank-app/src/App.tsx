@@ -239,9 +239,6 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
     window.open(`mailto:${userEmail}?subject=${subject}&body=${body}`, "_blank");
   };
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
 
   useEffect(() => {
     localStorage.setItem("bb_current_page", currentPage);
