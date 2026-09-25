@@ -1,3 +1,4 @@
+import './index.css';
 import React, { useState, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BakeryProvider, useBakery } from "./context/BakeryContext";
