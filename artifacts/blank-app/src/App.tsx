@@ -284,7 +284,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
 
               {stats.lowStockCount > 0 && (
                 <span
-                  onClick={() => setCurrentPage("ingredients ")}
+                  onClick={() => setCurrentPage("ingredients")}
                   className="cursor-pointer bg-yellow-400 text-yellow-950 font-extrabold text-[11px] px-2 py-0.5 rounded-full shadow-sm hover:bg-yellow-500 transition whitespace-nowrap"
                   title="Low Stock Alert"
                 >
@@ -331,7 +331,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                   { id: "invoices", label: "Invoices & Dispatch", icon: "🧾" }, // <-- ADDED HERE
                   { id: "orders", label: "Orders Manager", icon: "📦" },
                   { id: "products", label: "Products Catalog", icon: "🍽️" },
-                  { id: "ingredients ", label: "Raw Ingredients", icon: "🥣" },
+                  { id: "inventory", label: "Raw Ingredients", icon: "🥣" },
                   { id: "reports", label: "Reports & Analytics", icon: "📊" },
                 ].map((item) => (
                   <button
@@ -398,7 +398,9 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
         {currentPage === "invoices" && <InvoicesView />} {/* <-- ADDED HERE */}
         {currentPage === "orders" && <OrdersView onNavigate={setCurrentPage} />}
         {currentPage === "products" && <ProductsView />}
+
         {currentPage === "inventory" && <InventoryView />}
+        
         {currentPage === "reports" && <ReportsView onNavigate={setCurrentPage} />}
         {currentPage.startsWith("recipe-") && (
           <RecipeBuilderView
