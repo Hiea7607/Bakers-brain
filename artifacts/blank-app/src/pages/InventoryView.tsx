@@ -4,7 +4,7 @@ import { useBakery, IngredientItem, Purchase } from "../context/BakeryContext";
 import { supabase } from "../lib/supabaseClient";
 
 export const InventoryView: React.FC = () => {
-  const { ingredients, purchases, savePurchase, deleteIngredient, deductIngredient, fetchData } = useBakery();
+  const { ingredients, purchases, savePurchase, deleteIngredientItem, deductIngredientItem, fetchData } = useBakery();
 
   // Search & Modal State
   const [searchQuery, setSearchQuery] = useState("");
@@ -64,8 +64,16 @@ export const InventoryView: React.FC = () => {
       }
       setQuantity(""); 
     } else {
-      const nextNum = ingredients.length + 1;
-      const autoCode = `ING${String(nextNum).padStart(2, "0")}`;
+      // BUG FIX: Generate a truly unique ID by finding the highest existing ING number
+      let highestNum = 0;
+      ingredients.forEach(i => {
+        if (i.code.startsWith("ING")) {
+          const num = parseInt(i.code.replace("ING", ""), 10);
+          if (!isNaN(num) && num > highestNum) highestNum = num;
+        }
+      });
+
+      const autoCode = `ING${String(highestNum + 1).padStart(2, "0")}`;
       setCode(autoCode);
       setName("");
       setUnit("kg");
@@ -136,7 +144,8 @@ export const InventoryView: React.FC = () => {
     e.preventDefault();
     if (!showDeductModal || !deductQty) return;
 
-    await deductIngredient(showDeductModal.code, parseFloat(deductQty), deductReason);
+    // FIXED: Now properly using deductIngredientItem
+    await deductIngredientItem(showDeductModal.code, parseFloat(deductQty), deductReason);
     setShowDeductModal(null);
     setDeductQty("");
   };
@@ -149,7 +158,7 @@ export const InventoryView: React.FC = () => {
   );
 
   const ingredientPurchases: Purchase[] = selectedIngredient
-    ? purchases.filter((p) => p.code === selectedIngredient.code)
+    ? purchases.filter((p) => p.code === selectedIngredient.id)
     : [];
 
   const totalSpentOnItem = ingredientPurchases.reduce((sum, p) => sum + (p.total_cost || 0), 0);
@@ -186,12 +195,13 @@ export const InventoryView: React.FC = () => {
 
       {/* --- SCROLLABLE CARDS CONTAINER --- */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
+        {/* BUG FIX: Added proper conditional wrapper to prevent the empty text from appearing below items */}
         {filteredIngredients.length === 0 ? (
-          <div className="bg-white p-8 rounded-[20px] text-center text-gray-400 text-xs border border-gray-100 shadow-sm">
+          <div className="bg-white p-8 rounded-[20px] text-center text-gray-400 text-xs border border-gray-100 shadow-sm mt-4">
             {ingredients.length === 0 ? (
-              <>No ingredients in stock. Tap <strong>+ Add Purchase</strong>.</>
+              <p>No ingredients in stock. Tap <strong className="text-rose-600">+ Add Purchase</strong>.</p>
             ) : (
-              <>No matching ingredients found for "{searchQuery}".</>
+              <p>No matching ingredients found for "{searchQuery}".</p>
             )}
           </div>
         ) : (
@@ -200,7 +210,7 @@ export const InventoryView: React.FC = () => {
               const isLowStock = item.stock <= item.minimum;
 
               return (
-                <div key={item.code} className={`bg-white rounded-2xl p-5 border shadow-sm space-y-4 transition-all w-full ${isLowStock ? 'border-rose-300 bg-rose-50/20' : 'border-gray-100'}`}>
+                <div key={`${item.id}-${item.code}`} className={`bg-white rounded-2xl p-5 border shadow-sm space-y-4 transition-all w-full ${isLowStock ? 'border-rose-300 bg-rose-50/20' : 'border-gray-100'}`}>
 
                   {/* Header: Code, Name & Status */}
                   <div className="flex justify-between items-start">
@@ -390,7 +400,8 @@ export const InventoryView: React.FC = () => {
               <button
                 onClick={() => {
                   if (window.confirm(`Delete ${selectedIngredient.name}?`)) {
-                    deleteIngredient(selectedIngredient.code);
+                    // FIXED: Now properly using deleteIngredientItem
+                    deleteIngredientItem(selectedIngredient.code);
                     setSelectedIngredient(null);
                   }
                 }}

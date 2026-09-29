@@ -65,8 +65,16 @@ export const ProductsView: React.FC = () => {
   }, [selectedProduct]);
 
   const handleOpenAdd = () => {
-    const nextNum = products.length + 1;
-    const autoCode = `PC${String(nextNum).padStart(2, "0")}`;
+    // BUG FIX: Generate a truly unique ID by finding the highest existing PC number
+    let highestNum = 0;
+    products.forEach(p => {
+      if (p.code.startsWith("PC")) {
+        const num = parseInt(p.code.replace("PC", ""), 10);
+        if (!isNaN(num) && num > highestNum) highestNum = num;
+      }
+    });
+
+    const autoCode = `PC${String(highestNum + 1).padStart(2, "0")}`;
     setNewCode(autoCode);
     setNewName("");
     setNewPrice("");
@@ -191,20 +199,25 @@ export const ProductsView: React.FC = () => {
 
       {/* --- SCROLLABLE CARDS CONTAINER --- */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 pb-24">
+        {/* BUG FIX: Proper empty state logic that only shows when the list is actually empty */}
         {filteredProducts.length === 0 ? (
-          <div className="bg-white p-8 rounded-[20px] text-center text-gray-400 text-xs border border-gray-100 shadow-sm">
-            {products.length === 0 ? (<>No products available. Tap <strong>+ Add</strong>.</>) : (<>No matching products found.</>)}
+          <div className="bg-white p-8 rounded-[20px] text-center text-gray-400 text-xs border border-gray-100 shadow-sm mt-4">
+            {products.length === 0 ? (
+              <p>No products available. Tap <strong className="text-pink-600">+ Add</strong> to create one.</p>
+            ) : (
+              <p>No matching products found for "{searchQuery}".</p>
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-3">
             {filteredProducts.map((p) => {
-              const netProfit = p.price - (p.cost || 0);
-              const margin = p.price > 0 ? Math.round((netProfit / p.price) * 100) : 0;
-              const isBelowTarget = margin < TARGET_MARGIN || netProfit < 0;
+              const netProfit = Number(p.price) - Number(p.cost || 0);
+              const margin = Number(p.price) > 0 ? Math.round((netProfit / Number(p.price)) * 100) : 0;
+              const isBelowTarget = margin < Number(TARGET_MARGIN) || netProfit < 0;
               const unitDisplay = (p as any).unit || 'pic';
 
               return (
-                <div key={p.code} className={`bg-white rounded-xl p-3.5 border shadow-sm space-y-2.5 transition-all w-full ${isBelowTarget ? 'border-red-400 bg-red-50/20' : 'border-gray-100'}`}>
+                <div key={`${p.id}-${p.code}`} className={`bg-white rounded-xl p-3.5 border shadow-sm space-y-2.5 transition-all w-full ${isBelowTarget ? 'border-red-400 bg-red-50/20' : 'border-gray-100'}`}>
 
                   {/* Ultra-Mobile Friendly Header */}
                   <div className="flex justify-between items-start">
@@ -360,7 +373,7 @@ export const ProductsView: React.FC = () => {
             <div className="bg-pink-50 border border-pink-100 rounded-xl p-3 flex justify-between items-center">
               <div>
                 <p className="text-[10px] font-bold text-pink-600 uppercase tracking-wider">Total Base Cost</p>
-                <p className="text-2xl font-black text-gray-900">{CURRENCY} {selectedProduct.cost?.toFixed(2) || 0}</p>
+                <p className="text-2xl font-black text-gray-900">{CURRENCY} {Number(selectedProduct.cost || 0).toFixed(2)}</p>
               </div>
               <div className="text-right">
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Selling Price</p>

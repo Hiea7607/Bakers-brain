@@ -176,7 +176,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
       setParsed({
         customer: customer || lines[0] || "Online Customer", phone, email, items: extractedItems, subtotal, deliveryCharge, vatAmount: autoVatAmount, discountAmount,
         total: grandTotal, advancePaid, pendingPayment: Math.max(0, grandTotal - advancePaid), cost: totalCost, profit: grandTotal - totalCost,
-        location, deliveryDate: rawDateStr, paymentMethod: advancePaid > 0 ? "Advance Received" : "Cash on Delivery",
+        location, deliveryDate: rawDateStr, paymentMethod: advancePaid > 0 ? "bKash" : "Cash",
       });
 
     } catch (error) {
@@ -447,6 +447,21 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
 
                       <div className="flex justify-between text-[13px] font-black text-gray-900 mt-2"><span>Grand Total:</span><span>{CURRENCY} {parsed.total}</span></div>
 
+                      {/* --- ADDED: PAYMENT METHOD DROPDOWN --- */}
+                      <div className="flex justify-between items-center text-gray-600 font-bold mt-3">
+                         <span>Payment Method:</span>
+                         <select 
+                           value={parsed.paymentMethod || "Cash"}
+                           onChange={(e) => setParsed({...parsed, paymentMethod: e.target.value})}
+                           className="w-28 text-right border border-gray-200 rounded p-1 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-gray-400 bg-white shadow-sm"
+                         >
+                           <option value="Cash">Cash</option>
+                           <option value="bKash">bKash</option>
+                           <option value="Bank Transfer">Bank Transfer</option>
+                           <option value="Card">Card</option>
+                         </select>
+                      </div>
+
                       <div className="flex justify-between items-center text-rose-600 font-bold mt-2">
                          <span>Advance / Paid Now:</span>
                          <div className="flex items-center"><span className="mr-1.5">- {CURRENCY}</span><input type="number" value={parsed.advancePaid || ""} onChange={(e) => updateCalculations({ advancePaid: parseFloat(e.target.value) || 0 })} className="w-20 text-right border border-rose-200 rounded p-1 text-xs text-rose-600 focus:outline-none focus:ring-1 focus:ring-rose-400" /></div>
@@ -476,25 +491,82 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
         /* --- RECEIPT / INVOICE DISPLAY --- */
         <div className="space-y-3 print:space-y-0">
           {parsed?.customer === 'Self' ? (
-            <div className="bg-white border border-indigo-400 p-6 rounded-xl shadow-lg text-center space-y-4 print:shadow-none print:border-none print:p-0">
-              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-3xl mx-auto shadow-sm print:hidden">✅</div>
-              <div className="print:hidden">
-                <h3 className="text-xl font-black text-gray-900 tracking-tight">Shelf Stocked!</h3>
-                <p className="text-xs text-gray-500 font-medium mt-1">Ingredients deducted. Display updated.</p>
+            <div className="bg-white border border-indigo-400 p-4 rounded-xl shadow-lg text-center print:shadow-none print:border-none print:p-0 print:m-0">
+              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-3xl mx-auto shadow-sm print:hidden mb-4">✅</div>
+              <div className="print:hidden mb-4">
+                <h3 className="text-xl font-black text-gray-900 tracking-tight">Labels Ready!</h3>
+                <p className="text-xs text-gray-500 font-medium mt-1">Load your tag printer and click print.</p>
               </div>
-              <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl text-left print:bg-white print:border-2 print:border-black print:p-4">
-                <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest border-b border-indigo-200 pb-2 mb-3 print:text-black print:border-black">Kitchen Batch Tag: {createdTokenId}</p>
-                <div className="space-y-1.5">
-                  {parsed.items.map((item, idx) => (
-                    <div key={idx} className="flex justify-between text-sm font-bold text-gray-800 print:text-black">
-                      <span>{item.quantity}x {item.productName}</span>
-                    </div>
-                  ))}
+
+              {/* 🖨️ THIS SECTION ONLY SHOWS ON THE PRINTER (The Loop!) */}
+              <div className="hidden print:block print:w-full">
+                {parsed.items.flatMap((item, itemIdx) => 
+                  Array.from({ length: item.quantity }).map((_, qtyIdx) => {
+
+                    const today = new Date();
+                    const dayString = today.getDate().toString().padStart(2, '0');
+                    const shortId = createdTokenId ? createdTokenId.slice(-2) : "01";
+                    const batchNumber = `ORD-${dayString}#${shortId}`;
+
+                    const expDate = new Date();
+                    expDate.setDate(today.getDate() + 2); 
+
+                    return (
+                      <div key={`${itemIdx}-${qtyIdx}`} className="print:w-full print:border-b-2 print:border-dashed print:border-black print:pb-6 print:mb-6 print:page-break-inside-avoid font-sans">
+
+                        {/* 1. Business Name */}
+                        <h2 className="text-center font-black text-lg uppercase tracking-widest text-black mb-1">{businessName}</h2>
+
+                        {/* 2. Product Name */}
+                        <h3 className="text-center font-bold text-2xl text-black mb-1 leading-tight">{item.productName}</h3>
+
+                        {/* 3. BIG Retail Price */}
+                        <div className="text-center text-2xl font-black text-black mb-3">
+                          {CURRENCY} {item.unitPrice.toFixed(2)}
+                        </div>
+
+                        {/* 4. Production, Expiry, & Batch Dates */}
+                        <div className="text-[13px] font-bold text-black space-y-1 bg-gray-100 p-2 rounded-lg print:bg-transparent print:border print:border-black print:p-2">
+                          <div className="flex justify-between">
+                            <span>Prepared:</span>
+                            <span>{today.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Best Before:</span>
+                            <span>{expDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                          </div>
+                          <div className="flex justify-between mt-2 pt-2 border-t border-black">
+                            <span>Batch No:</span>
+                            <span>{batchNumber}</span>
+                          </div>
+                        </div>
+
+                        {/* Cut Line Indicator */}
+                        <div className="text-center text-[10px] text-gray-400 mt-2 font-mono tracking-widest">
+                          ✂ - - - - - - - - - - - - - - -
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* 💻 THIS SECTION SHOWS ON YOUR SCREEN PREVIEW */}
+              <div className="bg-indigo-50 p-4 rounded-xl text-left print:hidden">
+                <p className="text-xs font-bold text-indigo-600 mb-2">
+                  Tag Preview ({parsed.items.reduce((acc, curr) => acc + curr.quantity, 0)} total labels generating...):
+                </p>
+                <div className="space-y-1">
+                   {parsed.items.map((item, idx) => (
+                     <div key={idx} className="flex justify-between text-sm font-bold text-gray-800">
+                       <span>{item.quantity}x {item.productName}</span>
+                     </div>
+                   ))}
                 </div>
-                <p className="text-[10px] text-gray-400 mt-4 text-center print:text-black">Attach to tray for front counter</p>
               </div>
-              <div className="flex gap-2 print:hidden">
-                <button onClick={() => window.print()} className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-3 rounded-xl text-xs transition">🖨️ Print Tag</button>
+
+              <div className="flex gap-2 print:hidden mt-4">
+                <button onClick={() => window.print()} className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-3 rounded-xl text-xs transition">🖨️ Print Tags</button>
                 <button onClick={() => { setParsed(null); setCreatedTokenId(null); setRawText(""); setPosCart([]); setActiveTab('pos'); }} className="flex-[2] bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs shadow-md transition">Go to Walk-In POS ➔</button>
               </div>
             </div>
@@ -529,6 +601,8 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                     <div className="flex justify-between"><span className="font-medium">Customer:</span> <span className="font-bold">{parsed.customer}</span></div>
                     <div className="flex justify-between"><span className="font-medium">Phone:</span> <span className="font-bold">{parsed.phone || 'N/A'}</span></div>
                     <div className="flex justify-between"><span className="font-medium">Location:</span> <span className="font-bold text-right max-w-[160px] truncate">{parsed.location}</span></div>
+                    {/* --- ADDED: PAYMENT METHOD NOW PRINTS ON RECEIPT --- */}
+                    <div className="flex justify-between"><span className="font-medium">Payment:</span> <span className="font-bold">{parsed.paymentMethod}</span></div>
                   </div>
 
                   <div className="border-t-2 border-dashed border-gray-300 my-3 print:border-black"></div>

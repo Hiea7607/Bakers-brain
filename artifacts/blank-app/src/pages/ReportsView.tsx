@@ -12,9 +12,12 @@ export const ReportsView: React.FC<{ onNavigate: (page: string) => void }> = () 
   const [selectedIngredient, setSelectedIngredient] = useState<string>('');
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<any | null>(null);
 
+  const [receiptToPrint, setReceiptToPrint] = useState<Order[] | null>(null);
+  const businessName = localStorage.getItem("bb_business_name") || shopSettings?.shop_name || "BUSINESS BRAIN";
+
   useMemo(() => {
     if (!selectedIngredient && ingredients.length > 0) {
-      setSelectedIngredient(ingredients [0].code);
+      setSelectedIngredient(ingredients[0].code);
     }
   }, [ingredients, selectedIngredient]);
 
@@ -245,26 +248,126 @@ export const ReportsView: React.FC<{ onNavigate: (page: string) => void }> = () 
             <div>
               <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Order History</h4>
               <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                {orders
-                  .filter(o => o.phone === selectedCustomerForModal.phone || o.customer === selectedCustomerForModal.name)
-                  .map((order: Order, idx: number) => (
-                    <div key={idx} className="bg-white border border-gray-200 rounded-xl p-3 text-xs space-y-1 shadow-xs">
-                      <div className="flex justify-between font-bold text-gray-800">
-                        <span>{order.product_name} × {order.quantity}</span>
-                        <span className="text-emerald-600">{CURRENCY}{order.total}</span>
+                {(() => {
+                  // 1. Filter and Group the orders by Receipt ID
+                  const customerOrders = orders.filter(o => o.phone === selectedCustomerForModal.phone || o.customer === selectedCustomerForModal.name);
+                  const groups: Record<string, Order[]> = {};
+                  customerOrders.forEach(o => {
+                    if (!groups[o.id]) groups[o.id] = [];
+                    groups[o.id].push(o);
+                  });
+                  // 2. Sort newest to oldest
+                  const sortedGroups = Object.values(groups).sort((a, b) => new Date(b[0].date).getTime() - new Date(a[0].date).getTime());
+
+                  // 3. Render unified receipt cards
+                  return sortedGroups.map((group, idx) => {
+                    const first = group[0];
+                    const groupTotal = group.reduce((sum, item) => sum + item.total, 0);
+                    return (
+                      <div key={first.id} className="bg-white border border-gray-200 rounded-xl p-3 text-xs space-y-2 shadow-xs mb-2">
+                        <div className="flex justify-between items-start border-b border-gray-100 pb-2">
+                          <div>
+                            <span className="font-bold text-gray-800 block">Receipt: {first.id}</span>
+                            <span className="text-[10px] text-gray-400">{first.delivery_date || new Date(first.date).toLocaleDateString()}</span>
+                          </div>
+                          <span className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${first.status === 'Completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{first.status}</span>
+                        </div>
+
+                        <div className="space-y-1">
+                           {group.map((item, i) => (
+                             <div key={i} className="flex justify-between text-gray-600">
+                               <span>{item.quantity}x {item.product_name}</span>
+                               <span>{CURRENCY} {item.total.toFixed(2)}</span>
+                             </div>
+                           ))}
+                        </div>
+
+                        <div className="flex justify-between items-center pt-2 border-t border-gray-50">
+                          <span className="font-black text-gray-900">{CURRENCY} {groupTotal.toFixed(2)}</span>
+                          <button onClick={() => setReceiptToPrint(group)} className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-100 transition">🖨️ View Invoice</button>
+                        </div>
                       </div>
-                      <div className="flex justify-between text-[10px] text-gray-400">
-                        <span>{order.delivery_date || order.date}</span>
-                        <span className={`px-1.5 py-0.5 rounded font-bold ${order.status === 'Completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{order.status}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  });
+                })()}
               </div>
             </div>
 
             <button onClick={() => setSelectedCustomerForModal(null)} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-3 rounded-xl text-xs shadow transition">
               CLOSE
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 🖨️ THE PRINTABLE INVOICE POPUP */}
+      {receiptToPrint && (
+        <div className="fixed inset-0 bg-gray-900/60 z-[100] flex flex-col items-center justify-center p-4 print:p-0 print:bg-white">
+          <div className="bg-white border border-gray-200 p-6 rounded-xl shadow-lg max-w-sm w-full mx-auto font-sans print:shadow-none print:border-none print:p-0 print:max-w-full text-gray-900">
+
+            <div className="flex justify-end mb-2 print:hidden">
+              <button onClick={() => setReceiptToPrint(null)} className="text-gray-400 hover:text-gray-900 font-bold bg-gray-100 w-8 h-8 rounded-full flex items-center justify-center transition">✕</button>
+            </div>
+
+            <div className="text-center space-y-1">
+              <h2 className="font-black text-2xl uppercase tracking-widest text-black">{businessName}</h2>
+            </div>
+
+            <div className="border-t-2 border-dashed border-gray-300 my-4 print:border-black"></div>
+
+            <div className="text-center mb-4">
+              <h3 className="font-bold text-sm tracking-widest uppercase text-black">Commercial Invoice</h3>
+              <p className="text-[10px] font-mono text-gray-500 mt-0.5 print:text-black">Receipt No: {receiptToPrint[0].id}</p>
+              <p className="text-[10px] font-mono text-gray-500 mt-0.5 print:text-black">{new Date(receiptToPrint[0].date).toLocaleDateString('en-GB')} | {receiptToPrint[0].time}</p>
+            </div>
+
+            <div className="text-xs space-y-1 mb-4 text-black">
+              <div className="flex justify-between"><span className="font-medium">Customer:</span> <span className="font-bold">{receiptToPrint[0].customer}</span></div>
+              <div className="flex justify-between"><span className="font-medium">Phone:</span> <span className="font-bold">{receiptToPrint[0].phone || 'N/A'}</span></div>
+            </div>
+
+            <div className="border-t-2 border-dashed border-gray-300 my-3 print:border-black"></div>
+
+            <div className="mb-4">
+              <div className="flex justify-between text-[10px] font-bold text-gray-500 uppercase mb-2 print:text-black">
+                <span>Item & Qty</span>
+                <span>Total</span>
+              </div>
+              <div className="space-y-2 text-xs text-black">
+                {receiptToPrint.map((item, idx) => (
+                  <div key={idx} className="flex justify-between items-start">
+                    <p className="font-semibold">{item.product_name} <span className="text-gray-500 font-normal ml-1 print:text-black">× {item.quantity}</span></p>
+                    <p className="font-bold">{CURRENCY} {item.total.toFixed(2)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t-2 border-gray-800 my-3 print:border-black"></div>
+
+            <div className="flex justify-between items-center text-sm font-black mb-3 text-black">
+              <span>GRAND TOTAL:</span>
+              <span>{CURRENCY} {receiptToPrint.reduce((s, i) => s + i.total, 0).toFixed(2)}</span>
+            </div>
+
+            <div className="text-xs space-y-1.5 mb-4 text-gray-600 print:text-black">
+              <div className="flex justify-between">
+                <span>Paid / Advance:</span>
+                <span>{CURRENCY} {receiptToPrint.reduce((s, i) => s + i.advance_paid, 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center text-sm font-black bg-gray-100 p-2 rounded-lg print:bg-transparent print:border-2 print:border-black print:p-1.5 mt-2">
+                <span className="text-black">DUE TO COLLECT:</span>
+                <span className="text-black">{CURRENCY} {receiptToPrint.reduce((s, i) => s + i.pending_payment, 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between mt-2 text-[10px] text-gray-500 print:text-black">
+                <span>Payment Method:</span>
+                <span className="font-bold">{receiptToPrint[0].payment_method || 'Cash'}</span>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-4 print:hidden">
+              <button onClick={() => window.print()} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-3.5 rounded-xl text-xs shadow transition">🖨️ Print Receipt</button>
+            </div>
           </div>
         </div>
       )}

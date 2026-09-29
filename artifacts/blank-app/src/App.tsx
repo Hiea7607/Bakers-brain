@@ -29,17 +29,21 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    // 1. Log out of the database
     await supabase.auth.signOut();
-    localStorage.removeItem("bb_auth");
-    localStorage.removeItem("bb_role");
-    localStorage.removeItem("bb_lockout_reason");
-    localStorage.removeItem("bb_business_name");
+
+    // 2. Completely destroy ALL offline storage, not just the login tokens
+    localStorage.clear(); 
+
+    // 3. Update the auth state
     setIsAuthenticated(false);
+
+    // 4. THIS IS THE MAGIC LINE: Force the browser to refresh, wiping React's memory clean!
+    window.location.reload(); 
   };
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <BakeryProvider>
+      <QueryClientProvider client={queryClient}>
         {!isAuthenticated ? (
           <LandingGateway onLogin={handleLogin} />
         ) : lockoutReason ? (
@@ -51,18 +55,23 @@ export default function App() {
         ) : userRole === 'admin' ? (
           <AdminPortalView onLogout={handleLogout} />
         ) : (
-          <BakersBrainApp userRole={userRole} onLogout={handleLogout} />
+          /* ✅ BAKERY PROVIDER IS MOVED HERE: Now it only fetches AFTER you log in! */
+          <BakeryProvider>
+            <BakersBrainApp userRole={userRole} onLogout={handleLogout} />
+          </BakeryProvider>
         )}
-      </BakeryProvider>
-    </QueryClientProvider>
-  );
-}
+      </QueryClientProvider>
+    );
+  }
 
+
+// Secure Landing / Login Gateway
 // Secure Landing / Login Gateway
 function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
   const [activeTab, setActiveTab] = useState("business");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false); // Added state for password visibility
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [lastAdminSession, setLastAdminSession] = useState<{name: string, date: string} | null>(null);
@@ -181,19 +190,32 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
             <div>
               <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Password</label>
               <input
-                type="password"
+                type={showPassword ? "text" : "password"} // Dynamic type based on state
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter password..."
                 className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono"
                 required
               />
+              {/* Added Show Password Checkbox */}
+              <div className="flex items-center mt-2">
+                <input
+                  type="checkbox"
+                  id="showPassword"
+                  checked={showPassword}
+                  onChange={(e) => setShowPassword(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500 cursor-pointer accent-rose-600"
+                />
+                <label htmlFor="showPassword" className="ml-2 block text-xs font-medium text-gray-600 cursor-pointer select-none">
+                  Show Password
+                </label>
+              </div>
             </div>
             {error && <p className="text-xs font-bold text-red-500">{error}</p>}
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-lg text-sm shadow-md transition active:scale-95 disabled:opacity-50"
+              className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-lg text-sm shadow-md transition active:scale-95 disabled:opacity-50 mt-2"
             >
               {loading ? "Authenticating..." : "Unlock Dashboard →"}
             </button>
@@ -281,7 +303,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
 
               {stats.lowStockCount > 0 && (
                 <span
-                  onClick={() => setCurrentPage("ingredients")}
+                  onClick={() => setCurrentPage("inventory")}
                   className="cursor-pointer bg-yellow-400 text-yellow-950 font-extrabold text-[11px] px-2 py-0.5 rounded-full shadow-sm hover:bg-yellow-500 transition whitespace-nowrap"
                   title="Low Stock Alert"
                 >

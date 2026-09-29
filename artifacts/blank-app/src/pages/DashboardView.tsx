@@ -96,6 +96,19 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
         <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider">Attention Needed</h3>
 
         <div
+          onClick={() => onNavigate("inventory")}
+          className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50 cursor-pointer hover:text-red-600 transition"
+        >
+          <div className="flex items-center gap-2">
+            <span>⚠️</span>
+            <span className="text-gray-700 font-medium">Low Stock Ingredients</span>
+          </div>
+          <span className="text-red-600 font-bold text-xs">
+            {stats.lowStockCount || 0} items ›
+          </span>
+        </div>
+
+        <div
           onClick={() => onNavigate("reports")}
           className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50 cursor-pointer hover:text-purple-600 transition"
         >

@@ -41,7 +41,8 @@ export const InvoicesView: React.FC = () => {
 
   const calculatedSubtotal = selectedOrderLines?.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0) || 0;
   const calculatedVat = (calculatedSubtotal * (shopSettings?.default_tax_rate || 0)) / 100;
-  const calculatedDelivery = Math.max(0, invoiceGrandTotal - calculatedSubtotal - calculatedVat); // Reverse engineered from Total
+  // Fallback calculates delivery + any potential discounts
+  const calculatedDelivery = Math.max(0, invoiceGrandTotal - calculatedSubtotal - calculatedVat); 
 
   const handleDispatch = async () => {
     if (!selectedOrderId) return;
@@ -151,6 +152,8 @@ export const InvoicesView: React.FC = () => {
                 <div className="flex justify-between"><span className="font-medium">Phone:</span> <span className="font-bold">{firstLine.phone || 'N/A'}</span></div>
                 <div className="flex justify-between"><span className="font-medium">Delivery Date:</span> <span className="font-bold">{firstLine.delivery_date}</span></div>
                 <div className="flex justify-between"><span className="font-medium">Location:</span> <span className="font-bold text-right max-w-[150px] truncate">{firstLine.location}</span></div>
+                {/* --- ADDED: PAYMENT METHOD NOW PRINTS ON DISPATCH INVOICE --- */}
+                <div className="flex justify-between"><span className="font-medium">Payment:</span> <span className="font-bold">{firstLine.payment_method || 'Cash'}</span></div>
               </div>
 
               <div className="border-t-2 border-dashed border-gray-300 my-3 print:border-black"></div>
@@ -174,7 +177,7 @@ export const InvoicesView: React.FC = () => {
 
               <div className="text-xs space-y-1.5 mb-4 text-gray-600 print:text-black">
                 <div className="flex justify-between"><span>Subtotal:</span><span>{CURRENCY} {calculatedSubtotal.toFixed(2)}</span></div>
-                <div className="flex justify-between"><span>Delivery Charge:</span><span>{CURRENCY} {calculatedDelivery.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>Delivery & Fees:</span><span>{CURRENCY} {calculatedDelivery.toFixed(2)}</span></div>
                 <div className="flex justify-between"><span>VAT (Auto {shopSettings?.default_tax_rate || 0}%):</span><span>{CURRENCY} {calculatedVat.toFixed(2)}</span></div>
               </div>
 

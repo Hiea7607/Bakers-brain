@@ -2,25 +2,31 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import { supabase } from "../lib/supabaseClient";
 
 export type IngredientItem = {
+  id?: string;
   code: string; name: string; unit: string; stock: number; minimum: number; unit_cost: number;
+  is_deleted?: boolean; // <-- ADDED
 };
 
 export type Product = {
+  id?: string; 
   code: string; name: string; price: number; cost: number; status: "Active" | "Inactive";
   vat_rate?: number; profit_margin?: number; shelf_life_days?: number;
+  is_deleted?: boolean; // <-- ADDED
 };
 
 export type Purchase = {
   id: string; date: string; code: string; name: string; quantity: number; unit: string;
   unit_price: number; total_cost: number; source: string; notes: string;
+  ingredient_id?: string;
 };
 
 export type Order = {
-  id: string; date: string; time: string; customer: string; phone: string;
+  id: string; product_id?: string; date: string; time: string; customer: string; phone: string;
   product_code: string; product_name: string; quantity: number; unit_price: number;
   total: number; advance_paid: number; pending_payment: number; cost: number;
   profit: number; location: string; delivery_date: string; payment_method: string;
   status: "Pending" | "Paid" | "Completed"; is_new_customer: number;
+  is_deleted?: boolean; // <-- ADDED
 };
 
 export type ParsedOrderItem = {
@@ -56,7 +62,7 @@ export type ShopSettings = {
 };
 
 interface BakeryContextType {
-  products: Product[]; ingredients : IngredientItem[]; orders: Order[]; purchases: Purchase[];
+  products: Product[]; ingredients: IngredientItem[]; orders: Order[]; purchases: Purchase[];
   customers: CustomerSummary[]; shelfStock: ShelfItem[]; wasteLogs: WasteLog[];
   shopSettings: ShopSettings | null; stats: any; 
   fetchData: () => Promise<void>;
@@ -75,24 +81,22 @@ interface BakeryContextType {
 const BakeryContext = createContext<BakeryContextType | null>(null);
 
 // THE UNIVERSAL DATE TRANSLATOR
-// Converts "26/09/2026", "Today", or random formats into "26 Sep 2026"
 export const standardizeDateString = (dateStr: string) => {
   if (!dateStr || dateStr.toLowerCase() === "today") {
     return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date());
   }
   let dateObj = new Date(dateStr);
 
-  // Catch DD/MM/YYYY formats and convert to real Date object before formatting
   const parts = dateStr.split('/');
   if (parts.length === 3) {
      const day = parseInt(parts[0], 10);
-     const month = parseInt(parts[1], 10) - 1; // JS Months are 0-indexed
+     const month = parseInt(parts[1], 10) - 1;
      let year = parseInt(parts[2], 10);
      if (year < 100) year += 2000;
      dateObj = new Date(year, month, day);
   }
 
-  if (isNaN(dateObj.getTime())) return dateStr; // Fallback if completely unreadable
+  if (isNaN(dateObj.getTime())) return dateStr;
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(dateObj);
 };
 
@@ -112,7 +116,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       const [pRes, iRes, oRes, purRes] = await Promise.all([
         supabase.from("products").select("*").eq("user_id", user.id).eq("is_deleted", false).order("name", { ascending: true }),
-        supabase.from("ingredients").select("*").eq("user_id", user.id).eq("is_deleted", false).neq("status", 'archived').order("name", { ascending: true }),
+        supabase.from("ingredients").select("*").eq("user_id", user.id).eq("is_deleted", false).order("name", { ascending: true }),
         supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }),
         supabase.from("purchases").select("*").eq("user_id", user.id).order("date", { ascending: false })
       ]);
@@ -155,20 +159,34 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const addProduct = async (product: any) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const newProduct = { ...product, cost: 0, status: "Active", user_id: user.id };
-    setProducts((prev) => [...prev, newProduct as Product]);
-    await supabase.from("products").insert([newProduct]);
+
+    // FULLY SYNCHRONIZED: Explicitly set is_deleted to false on creation
+    const newProduct = { ...product, cost: 0, status: "Active", user_id: user.id, is_deleted: false };
+
+    // We add .select().single() to immediately download the new UUID!
+    const { data, error } = await supabase
+      .from("products")
+      .insert([newProduct])
+      .select()
+      .single();
+
+    if (error) {
+      alert("Database blocked the save: " + error.message);
+    } else if (data) {
+      // Only show it on screen IF it actually saved
+      setProducts((prev) => [...prev, data]);
+    }
   };
 
   const deleteProduct = async (code: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // 1. CLEANUP GHOST DATA: Delete all recipe rows linked to this product first
-    await supabase.from("recipes").delete().eq("product_code", code).eq("user_id", user.id);
-
-    // 2. Delete the actual product
-    const { error } = await supabase.from("products").delete().eq("code", code).eq("user_id", user.id);
+    const { error } = await supabase
+      .from("products")
+      .update({ is_deleted: true })
+      .eq("code", code)
+      .eq("user_id", user.id);
 
     if (!error) {
       setProducts((prev) => prev.filter((p) => p.code !== code));
@@ -178,8 +196,19 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const deleteIngredientItem = async (code: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    await supabase.from("ingredients").update({ status: 'archived', is_deleted: true }).eq("code", code).eq("user_id", user.id);
-    setIngredients((prev) => prev.filter((item) => item.code !== code));
+
+    const { error } = await supabase
+      .from("ingredients")
+      .update({ is_deleted: true })
+      .eq("code", code)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Error deleting ingredient:", error.message);
+      alert("Failed to delete: " + error.message);
+    } else {
+      setIngredients((prev) => prev.filter((item) => item.code !== code));
+    }
   };
 
   const deleteOrder = async (id: string) => {
@@ -203,27 +232,51 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const totalCost = purchase.quantity * purchase.unit_price;
-    const purId = `PUR-${Date.now().toString().slice(-6)}`;
-    const newPur = { id: purId, date: new Date().toISOString(), total_cost: totalCost, user_id: user.id, ...purchase };
-
-    const updatedPurchases = [newPur, ...purchases];
-    setPurchases(updatedPurchases);
-
-    const itemPurchases = updatedPurchases.filter((p) => p.code === purchase.code);
-    const totalSpent = itemPurchases.reduce((acc, p) => acc + (p.total_cost || 0), 0);
-    const totalQty = itemPurchases.reduce((acc, p) => acc + p.quantity, 0);
-    const weightedAvgCost = totalQty > 0 ? parseFloat((totalSpent / totalQty).toFixed(2)) : purchase.unit_price;
+    let currentIngId = "";
+    let weightedAvgCost = purchase.unit_price;
 
     const exists = ingredients.find((i) => i.code === purchase.code);
-    const updatedStock = exists ? parseFloat((exists.stock + purchase.quantity).toFixed(3)) : purchase.quantity;
 
-    setIngredients((prev) => {
-      if (exists) return prev.map((item) => item.code === purchase.code ? { ...item, stock: updatedStock, unit_cost: weightedAvgCost } : item);
-      return [...prev, { code: purchase.code, name: purchase.name, unit: purchase.unit, stock: purchase.quantity, minimum, unit_cost: weightedAvgCost }];
-    });
+    if (exists) {
+      currentIngId = exists.id!; 
+      const updatedStock = parseFloat((exists.stock + purchase.quantity).toFixed(3));
 
-    await supabase.from("ingredients").upsert([{ code: purchase.code, name: purchase.name, unit: purchase.unit, stock: updatedStock, minimum, unit_cost: weightedAvgCost, user_id: user.id, is_deleted: false }]);
+      const itemPurchases = purchases.filter((p) => p.ingredient_id === exists.id);
+      const totalSpent = itemPurchases.reduce((acc, p) => acc + (p.total_cost || 0), 0) + (purchase.quantity * purchase.unit_price);
+      const totalQty = itemPurchases.reduce((acc, p) => acc + p.quantity, 0) + purchase.quantity;
+      weightedAvgCost = totalQty > 0 ? parseFloat((totalSpent / totalQty).toFixed(2)) : purchase.unit_price;
+
+      await supabase.from("ingredients").update({ stock: updatedStock, unit_cost: weightedAvgCost }).eq("id", currentIngId);
+    } else {
+      const { data: newIng, error } = await supabase.from("ingredients").insert([{
+        code: purchase.code,
+        name: purchase.name,
+        unit: purchase.unit,
+        stock: purchase.quantity,
+        minimum,
+        unit_cost: purchase.unit_price,
+        user_id: user.id,
+        is_deleted: false
+      }]).select().single();
+
+      if (error) {
+        alert("Error creating ingredient: " + error.message);
+        return;
+      }
+      if (newIng) currentIngId = newIng.id;
+    }
+
+    const totalCost = purchase.quantity * purchase.unit_price;
+    const purId = `PUR-${Date.now().toString().slice(-6)}`;
+    const newPur = { 
+      id: purId, 
+      date: new Date().toISOString(), 
+      total_cost: totalCost, 
+      user_id: user.id, 
+      ingredient_id: currentIngId, 
+      ...purchase 
+    };
+
     await supabase.from("purchases").insert([newPur]);
 
     const { data: affectedRecipes } = await supabase.from("recipes").select("product_code").eq("ingredient_code", purchase.code).eq("user_id", user.id);
@@ -239,10 +292,11 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           });
           const roundedCost = parseFloat(recalculatedCost.toFixed(2));
           await supabase.from("products").update({ cost: roundedCost }).eq("code", pCode).eq("user_id", user.id);
-          setProducts((prev) => prev.map((p) => (p.code === pCode ? { ...p, cost: roundedCost } : p)));
         }
       }
     }
+
+    await fetchData(); 
   };
 
   const attachRecipeItem = async (productCode: string, ingredientCode: string, quantity: number) => {
@@ -281,8 +335,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const now = new Date();
 
     const newDeductions: any[] = [];
-    // NEW: We will queue up all our database updates here to fire them all at once!
-    const dbPromises: Promise<any>[] = []; 
+     const dbPromises: any[] = [];
 
     if (parsed.customer === "Self") {
       const newShelfItems: any[] = [];
@@ -307,15 +360,12 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             if (currentIng) {
               const remainingStock = Math.max(0, parseFloat((currentIng.stock - deduction).toFixed(3)));
 
-              // Update React instantly
               setIngredients((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
 
-              // NEW: Queue the database update instead of pausing the loop!
               dbPromises.push(
                 supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id)
               );
 
-              // LOG THE DEDUCTION
               newDeductions.push({
                 product_code: item.productCode,
                 product_name: item.productName,
@@ -330,9 +380,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
 
-      // NEW: Fire all queued ingredient updates instantly and concurrently!
       if (dbPromises.length > 0) await Promise.all(dbPromises);
-      // Bulk insert deductions log
       if (newDeductions.length > 0) await supabase.from("deductions").insert(newDeductions);
       return "SHELF-STOCKED";
     }
@@ -364,12 +412,17 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const rowPending = parsed.isWalkIn ? 0 : Math.max(0, rowTotal - rowAdvance);
       const rowProfit = rowTotal - item.cost;
 
+      const matchedProduct = products.find(p => p.code === item.productCode);
+
       newOrders.push({
-        id: orderId, date: now.toISOString(), time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        id: orderId,
+        product_id: matchedProduct?.id || null,
+        date: now.toISOString(), time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         customer: parsed.customer, phone: parsed.phone, product_code: item.productCode, product_name: item.productName,
         quantity: item.quantity, unit_price: item.unitPrice, total: parseFloat(rowTotal.toFixed(2)), advance_paid: parseFloat(rowAdvance.toFixed(2)),
         pending_payment: parseFloat(rowPending.toFixed(2)), cost: item.cost, profit: parseFloat(rowProfit.toFixed(2)),
-        location: parsed.location, delivery_date: finalDeliveryDate, payment_method: parsed.paymentMethod, status, is_new_customer: isNew, user_id: user.id
+        location: parsed.location, delivery_date: finalDeliveryDate, payment_method: parsed.paymentMethod, status, is_new_customer: isNew, user_id: user.id,
+        is_deleted: false // <-- ADDED
       } as Order);
     }
 
@@ -388,7 +441,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
             setShelfStock(prev => prev.map(s => s.id === batch.id ? { ...s, quantity: newQty } : s));
 
-            // Queue shelf update
             dbPromises.push(
               supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id)
             );
@@ -406,12 +458,10 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
               setIngredients((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
 
-              // Queue ingredient update
               dbPromises.push(
                 supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id)
               );
 
-              // LOG THE DEDUCTION
               newDeductions.push({
                 product_code: item.productCode,
                 product_name: item.productName,
@@ -427,7 +477,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }
 
-    // NEW: Fire all queued ingredient and shelf updates concurrently!
     if (dbPromises.length > 0) await Promise.all(dbPromises);
     if (newDeductions.length > 0) await supabase.from("deductions").insert(newDeductions);
 
@@ -465,8 +514,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const getEffectiveDate = (order: Order) => {
       if (!order.delivery_date) return new Date(order.date);
 
-      // Because we now standardize the DB entry to "25 Sep 2026", JS parses this flawlessly as a native Date.
-      // We keep a fallback just in case old database entries have "DD/MM/YYYY"
       const parts = order.delivery_date.split('/');
       if (parts.length === 3) {
         const day = parseInt(parts[0], 10);
@@ -527,12 +574,11 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       monthlyLoss: parseFloat(monthlyLoss.toFixed(2)), newCustomersThisMonth: monthOrders.filter((o) => o.is_new_customer === 1).length,
       newCustomersToday: new Set(orders.filter((o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1).map(o => o.phone)).size,
       lowStockCount: ingredients.filter((i) => i.stock <= i.minimum).length, lowSellingCount, bestSellingProduct: maxSold > 0 ? bestSellingProduct : "None yet",
-      mostConsumedIngredient: ingredients [0]?.name ? `${ingredients [0].name}` : "N/A", 
+      mostConsumedIngredient: ingredients[0]?.name ? `${ingredients[0].name}` : "N/A", 
       highestProfitProduct: highestMarginProduct !== "N/A" ? highestMarginProduct : "N/A"
     };
   }, [orders, ingredients, products, wasteLogs]);
 
-  // Helper function to force downloads on both mobile and desktop browsers
   const triggerDownload = (content: string, mimeType: string, filename: string) => {
     try {
       const blob = new Blob([content], { type: mimeType });
@@ -540,7 +586,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const link = document.createElement("a");
       link.href = url;
       link.download = filename;
-      document.body.appendChild(link); // Crucial for mobile browsers
+      document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
@@ -556,10 +602,8 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    // 1. Create CSV Headers
     const headers = ["Order ID", "Date", "Customer", "Phone", "Product", "Quantity", "Total (৳)", "Status", "Delivery Date"];
 
-    // 2. Format Data (wrapping text in quotes to protect against commas)
     const rows = orders.map((o) => {
       const escape = (text: string | number | undefined) => `"${String(text || "").replace(/"/g, '""')}"`;
       return [
@@ -575,14 +619,12 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ].join(",");
     });
 
-    // 3. Combine and Trigger Download
     const csvContent = [headers.join(","), ...rows].join("\n");
     const filename = `Daily_Orders_${new Date().toISOString().split('T')[0]}.csv`;
     triggerDownload(csvContent, "text/csv;charset=utf-8;", filename);
   };
 
   const exportDatabaseJSON = () => {
-    // 1. Bundle all the business data together
     const fullBackup = {
       exportDate: new Date().toISOString(),
       shopSettings,
@@ -596,11 +638,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       customers
     };
 
-    // 2. Convert to neatly formatted JSON string
     const jsonString = JSON.stringify(fullBackup, null, 2);
     const filename = `Monthly_Backup_${new Date().toISOString().split('T')[0]}.json`;
 
-    // 3. Trigger Download
     triggerDownload(jsonString, "application/json", filename);
   };
 
