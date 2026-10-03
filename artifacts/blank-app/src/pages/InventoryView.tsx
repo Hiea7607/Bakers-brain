@@ -124,7 +124,8 @@ export const InventoryView: React.FC = () => {
       return;
     }
 
-    savePurchase(
+    // ADDED: await the save function
+    await savePurchase(
       {
         code: formattedCode,
         name: formattedName,
@@ -136,6 +137,9 @@ export const InventoryView: React.FC = () => {
       },
       parseFloat(minimum) || 1
     );
+
+    // ADDED: Force the app to pull the newest data from Supabase
+    await fetchData(); 
 
     setShowAddModal(false);
   };
@@ -158,8 +162,8 @@ export const InventoryView: React.FC = () => {
   );
 
   const ingredientPurchases: Purchase[] = selectedIngredient
-    ? purchases.filter((p) => p.code === selectedIngredient.id)
-    : [];
+  ? purchases.filter((p) => p.code === selectedIngredient.code)
+  : [];
 
   const totalSpentOnItem = ingredientPurchases.reduce((sum, p) => sum + (p.total_cost || 0), 0);
 
