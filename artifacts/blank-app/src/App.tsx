@@ -89,6 +89,7 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
     setLoading(true);
 
     try {
+      // 1. Authenticate the user's password
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -96,24 +97,28 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
 
       if (authError) throw authError;
 
-      const { data: rosterData, error: rosterError } = await supabase
+      // 2. Fetch the roster WITHOUT .single() to prevent the 406 crash
+      const { data: rosterRows, error: rosterError } = await supabase
         .from('client_roster')
         .select('role, owner_name, is_locked, expiry_date, business_name')
-        .eq('email', authData.user.email)
-        .single();
+        .eq('email', authData.user.email);
 
-      if (rosterError || !rosterData) {
+      if (rosterError || !rosterRows || rosterRows.length === 0) {
         await supabase.auth.signOut();
         throw new Error("Account configuration not found.");
       }
 
       const requestedPortal = activeTab.toLowerCase(); 
 
-      if (rosterData.role !== requestedPortal) {
+      // 3. Find the exact row that matches the portal tab they clicked
+      const rosterData = rosterRows.find((row) => row.role === requestedPortal);
+
+      if (!rosterData) {
         await supabase.auth.signOut();
-        throw new Error(`Unauthorized. Please use the ${rosterData.role} portal.`);
+        throw new Error(`Unauthorized. Please use the correct portal.`);
       }
 
+      // 4. Set Admin Session
       if (rosterData.role === 'admin') {
         localStorage.setItem("lastAdminSession", JSON.stringify({
           name: rosterData.owner_name || "Md Golam Rabbany",
@@ -121,6 +126,7 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
         }));
       }
 
+      // 5. Set Business Session & check lockouts
       if (rosterData.role === 'business') {
         const isLocked = rosterData.is_locked;
         const isExpired = rosterData.expiry_date ? new Date(rosterData.expiry_date) < new Date() : false;
@@ -134,6 +140,7 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
         }
       }
 
+      // 6. Save universal auth state
       localStorage.setItem("bb_auth", "true");
       localStorage.setItem("bb_role", rosterData.role);
       localStorage.setItem("bb_user_email", email);
