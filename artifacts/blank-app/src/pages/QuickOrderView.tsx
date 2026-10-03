@@ -82,7 +82,9 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
       customer: "Walk-In Customer", phone: "", email: "", location: "Store Front",
       items: Object.values(consolidatedItems), subtotal, deliveryCharge: 0, vatAmount: autoVatAmount, discountAmount: 0,
       total: grandTotal, advancePaid: grandTotal, pendingPayment: 0, cost: totalCost, profit: grandTotal - totalCost,
-      deliveryDate: new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date()), paymentMethod: "Cash", isWalkIn: true 
+      deliveryDate: new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date()), 
+      paymentMethod: "Cash", 
+      orderType: "Walk-in"
     });
   };
 
@@ -177,13 +179,14 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
         customer: customer || lines[0] || "Online Customer", phone, email, items: extractedItems, subtotal, deliveryCharge, vatAmount: autoVatAmount, discountAmount,
         total: grandTotal, advancePaid, pendingPayment: Math.max(0, grandTotal - advancePaid), cost: totalCost, profit: grandTotal - totalCost,
         location, deliveryDate: rawDateStr, paymentMethod: advancePaid > 0 ? "bKash" : "Cash",
+        orderType: isSelf ? "Walk-in" : "Online" 
       });
 
     } catch (error) {
       alert("Error parsing text. Proceeding with an empty cart so you can manually add items.");
       setParsed({
         customer: "Self", phone: "N/A", items: [], subtotal: 0, deliveryCharge: 0, vatAmount: 0, discountAmount: 0,
-        total: 0, advancePaid: 0, pendingPayment: 0, cost: 0, profit: 0, location: "Display Shelf", deliveryDate: "Today", paymentMethod: "Cash"
+        total: 0, advancePaid: 0, pendingPayment: 0, cost: 0, profit: 0, location: "Display Shelf", deliveryDate: "Today", paymentMethod: "Cash", orderType: "Walk-in"
       });
     }
   };
@@ -250,7 +253,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
     });
   };
 
-  const handleConfirmAndSave = async (isWalkIn: boolean) => {
+  const handleConfirmAndSave = async (intent: "Self" | "Walk-in" | "Online") => {
     if (!parsed) return;
 
     if (parsed.items.some(i => i.productCode === "UNKNOWN")) {
@@ -258,13 +261,63 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
     }
     if (parsed.items.length === 0) return alert("Cannot save an empty order. Please add items.");
 
-    const orderToSave = { ...parsed, isWalkIn };
-    const orderId = await createOrder(orderToSave);
+    const finalOrder = { ...parsed, orderType: intent === "Self" ? "Walk-in" : intent };
+    const orderId = await createOrder(finalOrder);
     setCreatedTokenId(orderId);
   };
 
+  const handleCancelOrder = () => {
+    if (window.confirm("Are you sure you want to cancel this order? All current progress will be cleared.")) {
+      setParsed(null);
+      setCreatedTokenId(null);
+      setRawText("");
+      setPosCart([]);
+    }
+  };
+
+  const handleStayOnPageReset = () => {
+    setParsed(null); 
+    setCreatedTokenId(null); 
+    setRawText(""); 
+    setPosCart([]); 
+    setActiveTab('pos');
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 relative">
+
+      {/* 🔴 AGGRESSIVE PDF ISOLATION STYLES 🔴 */}
+      <style>{`
+        @media print {
+          @page { size: auto; margin: 0; }
+          body { background-color: white !important; }
+
+          /* Force EVERYTHING on the screen to hide completely */
+          body * { visibility: hidden; }
+
+          /* Force ONLY the invoice and its text to show */
+          #printable-invoice-container, #printable-invoice-container * {
+            visibility: visible;
+          }
+
+          /* Snap the invoice perfectly to the top left of the page */
+          #printable-invoice-container {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            margin: 0;
+            padding: 15px; 
+          }
+
+          /* Explicitly hide the buttons inside the invoice so they don't print */
+          .hide-on-print, .hide-on-print * {
+            display: none !important;
+            visibility: hidden !important;
+          }
+        }
+      `}</style>
+
       <div className="flex justify-between items-center print:hidden">
         <h2 className="text-lg font-bold text-gray-800">New Order Entry</h2>
         {!parsed && !createdTokenId && (
@@ -298,6 +351,10 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                         const exp = new Date(item.expiry_date || Date.now()).getTime();
                         const hoursLeft = (exp - now) / (1000 * 60 * 60);
 
+                        const daysLeft = Math.floor(Math.max(0, hoursLeft) / 24);
+                        const remHrs = Math.floor(Math.max(0, hoursLeft) % 24);
+                        const countdownStr = hoursLeft > 0 ? `⏳ ${daysLeft}d ${remHrs}h left` : "⚠️ Expired";
+
                         let cardClass = "border-emerald-200 bg-white";
                         let statusText = `${physicalRemaining} Left`;
 
@@ -307,15 +364,20 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                         return (
                           <div key={item.id} className={`border rounded-xl p-3 shadow-sm flex flex-col justify-between h-28 relative ${cardClass}`}>
                             <button onClick={() => handleWasteItem(item.id, physicalRemaining)} className="absolute -top-2 -left-2 bg-red-100 text-red-600 hover:bg-red-600 hover:text-white rounded-full w-6 h-6 flex items-center justify-center font-bold text-xs shadow transition" title="Throw Away (Log Waste)">✕</button>
-                            <div>
-                              <div className="flex justify-between items-start mb-1">
-                                <span className="text-[10px] font-bold text-gray-800 leading-tight">{item.product_name}</span>
-                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${physicalRemaining > 0 ? 'bg-amber-100 text-amber-800' : 'bg-gray-200 text-gray-500'}`}>{statusText}</span>
+
+                            <div className="flex flex-col h-full justify-between">
+                              <div>
+                                <div className="flex justify-between items-start mb-1">
+                                  <span className="text-[10px] font-bold text-gray-800 leading-tight">{item.product_name}</span>
+                                  <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${physicalRemaining > 0 ? 'bg-amber-100 text-amber-800' : 'bg-gray-200 text-gray-500'}`}>{statusText}</span>
+                                </div>
+                                <span className="text-xs text-emerald-700 font-black">{CURRENCY} {item.price}</span>
                               </div>
-                              <span className="text-xs text-emerald-700 font-black">{CURRENCY} {item.price}</span>
-                            </div>
-                            <div className="flex justify-end mt-2">
-                               <button disabled={physicalRemaining === 0 || hoursLeft <= 0} onClick={() => addToPosCart(item)} className={`h-8 w-8 rounded-lg shadow-sm flex items-center justify-center text-sm transition ${physicalRemaining > 0 && hoursLeft > 0 ? 'bg-gray-900 text-white hover:bg-black active:scale-95' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>🛍️</button>
+
+                              <div className="flex justify-between items-end mt-2">
+                                <span className={`text-[9px] font-bold ${hoursLeft > 0 ? 'text-blue-500' : 'text-red-500'}`}>{countdownStr}</span>
+                                <button disabled={physicalRemaining === 0 || hoursLeft <= 0} onClick={() => addToPosCart(item)} className={`h-8 w-8 rounded-lg shadow-sm flex items-center justify-center text-sm transition ${physicalRemaining > 0 && hoursLeft > 0 ? 'bg-gray-900 text-white hover:bg-black active:scale-95' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>🛍️</button>
+                              </div>
                             </div>
                           </div>
                         );
@@ -363,7 +425,9 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
 
           {/* --- CHECKOUT VIEW --- */}
           {parsed && (
-            <div className={`bg-white p-4 rounded-xl shadow-md border-2 print:hidden ${parsed.customer === 'Self' ? 'border-indigo-200' : 'border-emerald-100'} space-y-3`}>
+            <div className={`bg-white p-4 rounded-xl shadow-md border-2 print:hidden ${parsed.customer === 'Self' ? 'border-indigo-200' : 'border-emerald-100'} space-y-3 relative`}>
+              <button onClick={handleCancelOrder} className="absolute -top-3 -right-3 bg-red-100 text-red-600 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-full font-bold text-[10px] shadow border border-red-200 transition">✕ Cancel</button>
+
               <div className="flex justify-between items-center border-b pb-2 mb-3">
                 <h3 className="text-xs font-bold text-gray-800">Review & Finalize</h3>
                 <button onClick={() => setParsed(null)} className="text-[10px] bg-gray-100 text-gray-600 px-2 py-1 rounded-md hover:bg-gray-200 font-bold transition">← Edit Cart</button>
@@ -372,6 +436,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
               <div className="space-y-3 text-xs">
                 {parsed.customer !== 'Self' && (
                   <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 space-y-3 mb-4">
+
                       <div className="grid grid-cols-2 gap-3">
                           <div>
                             <label className="text-[10px] font-bold text-blue-600 block mb-1">Phone (Auto-Fills CRM)</label>
@@ -387,14 +452,16 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                          <label className="text-[10px] font-bold text-gray-500 block mb-1">Delivery Address / Location</label>
                          <input type="text" value={parsed.location} onChange={(e) => setParsed({...parsed, location: e.target.value})} className="w-full border border-gray-200 rounded-lg p-2 bg-white font-medium text-gray-800" placeholder="Address or Pickup..." />
                       </div>
-
                       <div className="grid grid-cols-2 gap-3">
                           <div>
                             <label className="text-[10px] font-bold text-gray-500 block mb-1">Email (Optional)</label>
                             <input type="email" value={parsed.email || ""} onChange={(e) => setParsed({...parsed, email: e.target.value})} className="w-full border border-gray-200 rounded-lg p-2 bg-white font-medium text-gray-800" placeholder="Email address..." />
                           </div>
                           <div>
-                             <label className="text-[10px] font-bold text-gray-500 block mb-1">Delivery Date</label>
+                             {/* DYNAMIC LABEL FOR SCREEN PREVIEW */}
+                             <label className="text-[10px] font-bold text-gray-500 block mb-1">
+                               {parsed.orderType === 'Online' ? 'Delivery Date' : 'Date'}
+                             </label>
                              <input type="text" value={parsed.deliveryDate} onChange={(e) => setParsed({...parsed, deliveryDate: e.target.value})} className="w-full border border-gray-200 rounded-lg p-2 bg-white font-medium text-gray-800" placeholder="Today" />
                           </div>
                       </div>
@@ -436,10 +503,12 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                          <span className="font-medium">Discount Amount:</span>
                          <div className="flex items-center"><span className="mr-1.5">- {CURRENCY}</span><input type="number" value={parsed.discountAmount || ""} placeholder="0" onChange={(e) => updateCalculations({ discountAmount: parseFloat(e.target.value) || 0 })} className="w-20 text-right border border-purple-200 rounded p-1 text-xs text-purple-600 font-bold focus:outline-none focus:ring-1 focus:ring-purple-400" /></div>
                       </div>
+
                       <div className="flex justify-between items-center text-gray-500 mb-2">
                          <span className="font-medium">Delivery Charge:</span>
                          <div className="flex items-center"><span className="mr-1.5">{CURRENCY}</span><input type="number" value={parsed.deliveryCharge || ""} placeholder="0" onChange={(e) => updateCalculations({ deliveryCharge: parseFloat(e.target.value) || 0 })} className="w-20 text-right border rounded p-1 text-xs font-bold text-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-400" /></div>
                       </div>
+
                       <div className="flex justify-between items-center text-gray-500 mb-2 border-b border-gray-100 pb-3">
                          <span className="font-medium">VAT (Auto {shopSettings?.default_tax_rate || 0}%):</span>
                          <span className="font-bold text-gray-900">{CURRENCY} {parsed.vatAmount}</span>
@@ -447,19 +516,15 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
 
                       <div className="flex justify-between text-[13px] font-black text-gray-900 mt-2"><span>Grand Total:</span><span>{CURRENCY} {parsed.total}</span></div>
 
-                      {/* --- ADDED: PAYMENT METHOD DROPDOWN --- */}
                       <div className="flex justify-between items-center text-gray-600 font-bold mt-3">
                          <span>Payment Method:</span>
-                         <select 
-                           value={parsed.paymentMethod || "Cash"}
+                         <input 
+                           type="text"
+                           value={parsed.paymentMethod || ""}
                            onChange={(e) => setParsed({...parsed, paymentMethod: e.target.value})}
-                           className="w-28 text-right border border-gray-200 rounded p-1 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-gray-400 bg-white shadow-sm"
-                         >
-                           <option value="Cash">Cash</option>
-                           <option value="bKash">bKash</option>
-                           <option value="Bank Transfer">Bank Transfer</option>
-                           <option value="Card">Card</option>
-                         </select>
+                           className="w-32 text-right border border-gray-200 rounded p-1 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-gray-400 bg-white shadow-sm"
+                           placeholder="Cash, bKash..."
+                         />
                       </div>
 
                       <div className="flex justify-between items-center text-rose-600 font-bold mt-2">
@@ -476,11 +541,11 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
 
               <div className="flex gap-2 pt-2 border-t border-gray-100 mt-4">
                 {parsed.customer === 'Self' ? (
-                  <button onClick={() => handleConfirmAndSave(false)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl text-xs shadow transition">📦 TRANSFER TO DISPLAY SHELF</button>
+                  <button onClick={() => handleConfirmAndSave("Self")} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl text-xs shadow transition">📦 TRANSFER TO DISPLAY SHELF</button>
                 ) : (
                   <>
-                    <button onClick={() => handleConfirmAndSave(false)} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl text-xs shadow">QUEUE DELIVERY</button>
-                    <button onClick={() => handleConfirmAndSave(true)} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3.5 rounded-xl text-xs shadow">COMPLETE SALE</button>
+                    <button onClick={() => handleConfirmAndSave("Online")} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl text-xs shadow transition">🚚 QUEUE DELIVERY</button>
+                    <button onClick={() => handleConfirmAndSave("Walk-in")} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3.5 rounded-xl text-xs shadow transition">✅ COMPLETE SALE</button>
                   </>
                 )}
               </div>
@@ -488,93 +553,63 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
           )}
         </>
       ) : (
-        /* --- RECEIPT / INVOICE DISPLAY --- */
-        <div className="space-y-3 print:space-y-0">
+
+        /* --- THE PRINTABLE INVOICE WRAPPER --- */
+        <div id="printable-invoice-container" className="space-y-3 p-4 bg-white rounded-xl shadow-lg border border-gray-200 max-w-sm mx-auto font-sans relative">
+
+          {/* NEW TOP-RIGHT CLOSE BUTTON */}
+          <button onClick={handleStayOnPageReset} className="absolute -top-3 -right-3 bg-gray-100 text-gray-600 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-full font-bold text-[10px] shadow border border-gray-200 transition hide-on-print">✕ Close</button>
+
           {parsed?.customer === 'Self' ? (
-            <div className="bg-white border border-indigo-400 p-4 rounded-xl shadow-lg text-center print:shadow-none print:border-none print:p-0 print:m-0">
-              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-3xl mx-auto shadow-sm print:hidden mb-4">✅</div>
-              <div className="print:hidden mb-4">
+            /* --- KITCHEN TAGS --- */
+            <div className="text-center">
+              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-3xl mx-auto shadow-sm mb-4 hide-on-print">✅</div>
+              <div className="mb-4 hide-on-print">
                 <h3 className="text-xl font-black text-gray-900 tracking-tight">Labels Ready!</h3>
                 <p className="text-xs text-gray-500 font-medium mt-1">Load your tag printer and click print.</p>
               </div>
 
-              {/* 🖨️ THIS SECTION ONLY SHOWS ON THE PRINTER (The Loop!) */}
-              <div className="hidden print:block print:w-full">
+              <div className="print:block print:w-[80mm] print:mx-auto">
+                {/* LOOP: Creates ONE physical tag for EVERY item in the quantity count */}
                 {parsed.items.flatMap((item, itemIdx) => 
                   Array.from({ length: item.quantity }).map((_, qtyIdx) => {
-
                     const today = new Date();
                     const dayString = today.getDate().toString().padStart(2, '0');
                     const shortId = createdTokenId ? createdTokenId.slice(-2) : "01";
-                    const batchNumber = `ORD-${dayString}#${shortId}`;
+                    const batchNumber = `BATCH-${dayString}#${shortId}`;
 
                     const expDate = new Date();
                     expDate.setDate(today.getDate() + 2); 
 
                     return (
-                      <div key={`${itemIdx}-${qtyIdx}`} className="print:w-full print:border-b-2 print:border-dashed print:border-black print:pb-6 print:mb-6 print:page-break-inside-avoid font-sans">
-
-                        {/* 1. Business Name */}
+                      <div key={`${itemIdx}-${qtyIdx}`} className="print:w-full print:border-b-2 print:border-dashed print:border-black print:pb-6 print:mb-6 print:break-inside-avoid">
                         <h2 className="text-center font-black text-lg uppercase tracking-widest text-black mb-1">{businessName}</h2>
 
-                        {/* 2. Product Name */}
+                        {/* NO QUANTITY MULTIPLIER HERE - JUST THE RAW ITEM NAME */}
                         <h3 className="text-center font-bold text-2xl text-black mb-1 leading-tight">{item.productName}</h3>
 
-                        {/* 3. BIG Retail Price */}
-                        <div className="text-center text-2xl font-black text-black mb-3">
-                          {CURRENCY} {item.unitPrice.toFixed(2)}
+                        <div className="text-[13px] font-bold text-black space-y-1 bg-gray-100 p-2 rounded-lg print:bg-transparent print:border print:border-black print:p-2 mt-4">
+                          <div className="flex justify-between"><span>Prepared:</span><span>{today.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span></div>
+                          <div className="flex justify-between"><span>Best Before:</span><span>{expDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span></div>
+                          <div className="flex justify-between mt-2 pt-2 border-t border-black"><span>Batch No:</span><span>{batchNumber}</span></div>
                         </div>
-
-                        {/* 4. Production, Expiry, & Batch Dates */}
-                        <div className="text-[13px] font-bold text-black space-y-1 bg-gray-100 p-2 rounded-lg print:bg-transparent print:border print:border-black print:p-2">
-                          <div className="flex justify-between">
-                            <span>Prepared:</span>
-                            <span>{today.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Best Before:</span>
-                            <span>{expDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                          </div>
-                          <div className="flex justify-between mt-2 pt-2 border-t border-black">
-                            <span>Batch No:</span>
-                            <span>{batchNumber}</span>
-                          </div>
-                        </div>
-
-                        {/* Cut Line Indicator */}
-                        <div className="text-center text-[10px] text-gray-400 mt-2 font-mono tracking-widest">
-                          ✂ - - - - - - - - - - - - - - -
-                        </div>
+                        <div className="text-center text-[10px] text-gray-400 mt-2 font-mono tracking-widest hide-on-print">✂ - - - - - - - - - - - - - - -</div>
                       </div>
                     );
                   })
                 )}
               </div>
 
-              {/* 💻 THIS SECTION SHOWS ON YOUR SCREEN PREVIEW */}
-              <div className="bg-indigo-50 p-4 rounded-xl text-left print:hidden">
-                <p className="text-xs font-bold text-indigo-600 mb-2">
-                  Tag Preview ({parsed.items.reduce((acc, curr) => acc + curr.quantity, 0)} total labels generating...):
+              <div className="bg-indigo-50 p-4 rounded-xl text-left print:hidden mb-4">
+                <p className="text-xs font-bold text-indigo-600">
+                  Tag Preview ({parsed.items.reduce((acc, curr) => acc + curr.quantity, 0)} total tags generating...)
                 </p>
-                <div className="space-y-1">
-                   {parsed.items.map((item, idx) => (
-                     <div key={idx} className="flex justify-between text-sm font-bold text-gray-800">
-                       <span>{item.quantity}x {item.productName}</span>
-                     </div>
-                   ))}
-                </div>
-              </div>
-
-              <div className="flex gap-2 print:hidden mt-4">
-                <button onClick={() => window.print()} className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-3 rounded-xl text-xs transition">🖨️ Print Tags</button>
-                <button onClick={() => { setParsed(null); setCreatedTokenId(null); setRawText(""); setPosCart([]); setActiveTab('pos'); }} className="flex-[2] bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs shadow-md transition">Go to Walk-In POS ➔</button>
               </div>
             </div>
           ) : (
 
-            /* --- THE UNIFIED MASTER INVOICE (CHECKOUT PAGE) --- */
-            <div className="bg-white border border-gray-200 p-6 rounded-xl shadow-lg max-w-sm mx-auto font-sans print:shadow-none print:border-none print:p-0 print:max-w-full text-gray-900">
-
+            /* --- COMMERCIAL INVOICE --- */
+            <div>
               <div className="text-center space-y-1">
                 <h2 className="font-black text-2xl uppercase tracking-widest text-black">{businessName}</h2>
                 {(shopSettings?.shop_address || shopSettings?.shop_phone || businessEmail) && (
@@ -601,7 +636,13 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                     <div className="flex justify-between"><span className="font-medium">Customer:</span> <span className="font-bold">{parsed.customer}</span></div>
                     <div className="flex justify-between"><span className="font-medium">Phone:</span> <span className="font-bold">{parsed.phone || 'N/A'}</span></div>
                     <div className="flex justify-between"><span className="font-medium">Location:</span> <span className="font-bold text-right max-w-[160px] truncate">{parsed.location}</span></div>
-                    {/* --- ADDED: PAYMENT METHOD NOW PRINTS ON RECEIPT --- */}
+
+                    {/* DYNAMIC DATE LINE ADDED HERE */}
+                    <div className="flex justify-between">
+                      <span className="font-medium">{parsed.orderType === 'Online' ? 'Delivery Date:' : 'Date:'}</span> 
+                      <span className="font-bold">{parsed.deliveryDate}</span>
+                    </div>
+
                     <div className="flex justify-between"><span className="font-medium">Payment:</span> <span className="font-bold">{parsed.paymentMethod}</span></div>
                   </div>
 
@@ -626,7 +667,11 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
 
                   <div className="text-xs space-y-1.5 mb-4 text-gray-600 print:text-black">
                     <div className="flex justify-between"><span>Subtotal:</span><span>{CURRENCY} {parsed.subtotal.toFixed(2)}</span></div>
-                    <div className="flex justify-between"><span>Delivery Charge:</span><span>{CURRENCY} {parsed.deliveryCharge.toFixed(2)}</span></div>
+
+                    {parsed.deliveryCharge > 0 && (
+                      <div className="flex justify-between"><span>Delivery Charge:</span><span>{CURRENCY} {parsed.deliveryCharge.toFixed(2)}</span></div>
+                    )}
+
                     <div className="flex justify-between"><span>VAT (Auto {shopSettings?.default_tax_rate || 0}%):</span><span>{CURRENCY} {parsed.vatAmount.toFixed(2)}</span></div>
                     {parsed.discountAmount > 0 && <div className="flex justify-between"><span>Discount:</span><span>- {CURRENCY} {parsed.discountAmount.toFixed(2)}</span></div>}
                   </div>
@@ -666,13 +711,22 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                   </div>
                 </>
               )}
-
-              <div className="flex gap-2 pt-6 print:hidden">
-                <button onClick={() => window.print()} className="flex-1 bg-gray-800 hover:bg-black text-white font-bold py-3.5 rounded-xl text-xs shadow transition">🖨️ Print Receipt</button>
-                <button onClick={() => { setParsed(null); setCreatedTokenId(null); setRawText(""); setPosCart([]); onOrderSaved(); }} className="flex-[2] bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-xs shadow-sm transition">← Finish & Start New</button>
-              </div>
             </div>
           )}
+
+          {/* --- INTERACTIVE BUTTONS (THESE DO NOT PRINT) --- */}
+          <div className="flex gap-2 pt-6 hide-on-print">
+            <button onClick={() => window.print()} className="flex-1 bg-gray-800 hover:bg-black text-white font-bold py-3.5 rounded-xl text-xs shadow transition flex items-center justify-center gap-2">🖨️ Print</button>
+            {parsed?.customer !== 'Self' && (
+              <>
+                <a href={`https://wa.me/${parsed?.phone.replace(/[^0-9]/g, '')}`} target="_blank" rel="noreferrer" className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3.5 rounded-xl text-xs shadow transition flex items-center justify-center gap-2">💬 WhatsApp</a>
+                <a href={`mailto:${parsed?.email || ''}`} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3.5 rounded-xl text-xs shadow transition flex items-center justify-center gap-2">✉️ Email</a>
+              </>
+            )}
+          </div>
+          <div className="pt-2 hide-on-print">
+             <button onClick={handleStayOnPageReset} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-xs shadow-sm transition">← Finish & Start New</button>
+          </div>
         </div>
       )}
     </div>

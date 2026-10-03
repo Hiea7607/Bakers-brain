@@ -197,7 +197,8 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
       </div>
 
       {/* Additional Business Signals */}
-      <div className="bg-white p-4 rounded-xl shadow-xs border border-gray-100 space-y-2 text-xs">
+      <div className="
+        bg-white p-4 rounded-xl shadow-xs border border-gray-100 space-y-2 text-xs">
         <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider">Business Signals</h3>
         <p className="text-gray-600">
           • <strong>Most Consumed:</strong> {stats.mostConsumedIngredient}
