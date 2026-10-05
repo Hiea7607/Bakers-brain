@@ -85,22 +85,40 @@ interface BakeryContextType {
 const BakeryContext = createContext<BakeryContextType | null>(null);
 
 export const standardizeDateString = (dateStr: string) => {
-  if (!dateStr || dateStr.toLowerCase() === "today") {
-    return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date());
-  }
-  let dateObj = new Date(dateStr);
+  const today = new Date();
+  let targetDate = new Date();
 
-  const parts = dateStr.split('/');
-  if (parts.length === 3) {
-     const day = parseInt(parts[0], 10);
-     const month = parseInt(parts[1], 10) - 1;
-     let year = parseInt(parts[2], 10);
-     if (year < 100) year += 2000;
-     dateObj = new Date(year, month, day);
+  const cleanStr = (dateStr || "").trim().toLowerCase();
+
+  if (!cleanStr || cleanStr === "today") {
+    targetDate = today;
+  } else if (cleanStr === "tomorrow") {
+    targetDate.setDate(today.getDate() + 1);
+  } else {
+    // Handle formats like 6/10/2026
+    const parts = cleanStr.split('/');
+    if (parts.length === 3) {
+       const day = parseInt(parts[0], 10);
+       const month = parseInt(parts[1], 10) - 1;
+       let year = parseInt(parts[2], 10);
+       if (year < 100) year += 2000;
+       targetDate = new Date(year, month, day);
+    } else {
+       targetDate = new Date(cleanStr);
+    }
   }
 
-  if (isNaN(dateObj.getTime())) return dateStr;
-  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(dateObj);
+  // If it's completely invalid, fallback to today
+  if (isNaN(targetDate.getTime())) {
+    targetDate = today;
+  }
+
+  // Output strict Database Format (YYYY-MM-DD)
+  const yyyy = targetDate.getFullYear();
+  const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
+  const dd = String(targetDate.getDate()).padStart(2, '0');
+
+  return `${yyyy}-${mm}-${dd}`;
 };
 
 export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

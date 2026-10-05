@@ -101,7 +101,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
       let customer = isSelf ? "Self" : "Online Customer";
       let phone = isSelf ? "N/A" : "";
       let location = isSelf ? "Display Shelf" : "Direct Pickup";
-      let email = "", rawDateStr = "Today";
+      let email = "", rawDateStr = "Today", extractedPaymentMethod = ""; // Added variable
       let deliveryCharge = 0, textVatRate = 0, advancePaid = 0, discountAmount = 0;
 
       const extractedItems: ParsedOrderItem[] = [];
@@ -116,14 +116,28 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
           else if (lower.startsWith("phone:") || lower.startsWith("mobile:")) phone = line.split(":")[1]?.trim() || phone;
           else if (lower.startsWith("address:") || lower.startsWith("location:")) location = line.split(":")[1]?.trim() || location;
           else if (lower.startsWith("email:")) email = line.split(":")[1]?.trim() || email;
-          else if (lower.startsWith("date:") || lower.startsWith("delivery date:")) rawDateStr = line.split(":")[1]?.trim() || rawDateStr;
+            else if (lower.startsWith("date:") || lower.startsWith("delivery date:")) {
+              const parsedDateInput = line.split(":")[1]?.trim() || "";
+
+              // If user typed a standard DD/MM/YYYY or D/M/YYYY format (e.g., 6/10/2026)
+              const dmyMatch = parsedDateInput.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+              if (dmyMatch) {
+                const [, day, month, year] = dmyMatch;
+                rawDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+              } else {
+                rawDateStr = parsedDateInput;
+              }
+            }
           else if (lower.startsWith("delivery") && (lower.includes("charge") || lower.includes("cost"))) deliveryCharge = parseFloat((line.match(/[\d\.]+/) || ["0"])[0]);
           else if (lower.startsWith("vat:")) textVatRate = parseFloat((line.match(/[\d\.]+/) || ["0"])[0]);
           else if (lower.startsWith("advance") || lower.startsWith("paid:")) advancePaid = parseFloat((line.match(/[\d\.]+/) || ["0"])[0]);
           else if (lower.startsWith("discount:")) discountAmount = parseFloat((line.match(/[\d\.]+/) || ["0"])[0]);
+          else if (lower.startsWith("payment method:") || lower.startsWith("payment:")) {
+            extractedPaymentMethod = line.split(":")[1]?.trim() || "";
+          }
         }
-
-        const isMetaLine = lower.startsWith("delivery") || lower.startsWith("vat:") || lower.startsWith("advance") || lower.startsWith("paid:") || lower.startsWith("discount:") || lower.startsWith("customer:") || lower.startsWith("name:") || lower.startsWith("phone:") || lower.startsWith("mobile:") || lower.startsWith("address:") || lower.startsWith("location:") || lower.startsWith("date:") || lower.startsWith("items:") || lower.startsWith("email:");
+        
+        const isMetaLine = lower.startsWith("delivery") || lower.startsWith("vat:") || lower.startsWith("advance") || lower.startsWith("paid:") || lower.startsWith("discount:") || lower.startsWith("customer:") || lower.startsWith("name:") || lower.startsWith("phone:") || lower.startsWith("mobile:") || lower.startsWith("address:") || lower.startsWith("location:") || lower.startsWith("date:") || lower.startsWith("items:") || lower.startsWith("email:") || lower.startsWith("payment method:");
 
         if (!isMetaLine && line.length > 1) {
           let matchedProduct: Product | null = null;
@@ -178,7 +192,8 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
       setParsed({
         customer: customer || lines[0] || "Online Customer", phone, email, items: extractedItems, subtotal, deliveryCharge, vatAmount: autoVatAmount, discountAmount,
         total: grandTotal, advancePaid, pendingPayment: Math.max(0, grandTotal - advancePaid), cost: totalCost, profit: grandTotal - totalCost,
-        location, deliveryDate: rawDateStr, paymentMethod: advancePaid > 0 ? "bKash" : "Cash",
+        location, deliveryDate: rawDateStr, 
+        paymentMethod: extractedPaymentMethod || (advancePaid > 0 ? "bKash" : "Cash"), // Uses your text input first!
         orderType: isSelf ? "Walk-in" : "Online" 
       });
 

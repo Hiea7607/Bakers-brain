@@ -56,27 +56,26 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
   }, [orders]);
 
   // ============================================================================
-  // DATE-BASED ROUTING ENGINE
-  // Routes to "Pending" (Today) or "Upcoming" (Future) based on delivery date
+  // BULLETPROOF STRING-BASED DATE ROUTING ENGINE
+  // Compares exact YYYY-MM-DD values to prevent timezone and midnight bugs
   // ============================================================================
-  const todayMidnight = new Date();
-  todayMidnight.setHours(0, 0, 0, 0);
-
-  const getEffectiveDate = (dateStr: string) => {
-    if (!dateStr) return new Date();
-    if (dateStr.length === 10) return new Date(`${dateStr}T00:00:00`);
-    return new Date(dateStr);
-  };
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, []);
 
   const filteredGroups = groupedOrders.filter((group) => {
-    // NEW: If the card is hidden by the user, do not render it
+    // If the card is hidden by the user, do not render it
     if (hiddenCards.includes(group.id)) return false; 
 
-    const d = getEffectiveDate(group.delivery_date);
-    d.setHours(0, 0, 0, 0);
+    // Extract the YYYY-MM-DD portion safely from the database date string
+    const itemDate = group.delivery_date ? String(group.delivery_date).substring(0, 10) : "";
 
-    const isToday = d.getTime() === todayMidnight.getTime();
-    const isFuture = d.getTime() > todayMidnight.getTime();
+    const isToday = itemDate === todayStr;
+    const isFuture = itemDate > todayStr;
 
     if (activeTab === "Pending") return group.status === "Pending" && isToday;
     if (activeTab === "Upcoming") return group.status === "Pending" && isFuture;
@@ -204,16 +203,6 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                       <p className="text-xs text-gray-500 mt-0.5 font-medium">{group.phone || "No phone provided"}</p>
                     </div>
                     <div className="flex gap-2">
-                      {/* ONLY show print button for active deliveries */}
-                      {isPending && (
-                        <button 
-                          onClick={() => setOrderToPrint(group)}
-                          className="text-[10px] bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold px-2 py-1 rounded-md shadow-sm transition flex items-center gap-1"
-                          title="Print Delivery Invoice"
-                        >
-                          🖨️ Print
-                        </button>
-                      )}
                       <span className="text-[10px] text-gray-400 font-mono bg-gray-100 px-2 py-1 rounded-md flex items-center">{group.time}</span>
                     </div>
                   </div>
