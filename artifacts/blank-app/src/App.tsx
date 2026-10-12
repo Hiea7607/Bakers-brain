@@ -13,6 +13,7 @@ import { ClientLockoutView } from "./ClientLockoutView";
 import { formatToUniversalDate } from "./lib/dateUtils";
 import { supabase } from "./lib/supabaseClient";
 import { InvoicesView } from './pages/InvoicesView';
+import { CustomersView } from './pages/CustomersView';
 
 const queryClient = new QueryClient();
 
@@ -65,7 +66,6 @@ export default function App() {
   }
 
 
-// Secure Landing / Login Gateway
 // Secure Landing / Login Gateway
 function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
   const [activeTab, setActiveTab] = useState("business");
@@ -240,7 +240,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
   const businessName = localStorage.getItem("bb_business_name") || "Business Account";
   const userEmail = localStorage.getItem("bb_user_email") || "user@bakersbrain.com";
 
-  const { stats = {} as any, products = [], exportDatabaseJSON, exportOrdersCSV, fetchData } = useBakery();
+  const { stats = {} as any, products = [], exportMonthlyCSV, exportOrdersCSV, fetchData } = useBakery();
 
   const targetMargin = Number(localStorage.getItem("bb_target_margin")) || 20;
   const issueProductsCount = (products || []).filter(p => {
@@ -354,11 +354,11 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                 {[
                   { id: "dashboard", label: "Dashboard", icon: "🏠" },
                   { id: "neworder", label: "New Order (Quick)", icon: "⚡" },
-                  { id: "invoices", label: "Invoices & Dispatch", icon: "🧾" }, // <-- ADDED HERE
+                  { id: "invoices", label: "Invoices & Dispatch", icon: "🧾" }, 
                   { id: "orders", label: "Orders Manager", icon: "📦" },
                   { id: "products", label: "Products Catalog", icon: "🍽️" },
                   { id: "inventory", label: "Raw Ingredients", icon: "🥣" },
-                  { id: "reports", label: "Reports & Analytics", icon: "📊" },
+                  { id: "customers", label: "Customers Directory", icon: "👥" }, // <-- ADDED CRM HERE, REMOVED REPORTS
                 ].map((item) => (
                   <button
                     key={item.id}
@@ -382,17 +382,23 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                 <p className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest px-3 mb-2">Data & Backup</p>
 
                 <button
-                  onClick={exportOrdersCSV} 
+                  onClick={() => {
+                    exportOrdersCSV();
+                    setShowDrawer(false);
+                  }}
                   className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium"
                 >
-                  📦 Daily Data (CSV)
+                  📄 Daily Data (CSV)
                 </button>
 
                 <button
-                  onClick={exportDatabaseJSON} 
+                  onClick={() => {
+                    exportMonthlyCSV();
+                    setShowDrawer(false);
+                  }}
                   className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium"
                 >
-                  📅 Monthly Data (JSON)
+                  🗓️ Monthly Data (CSV)
                 </button>
 
                 <button
@@ -421,12 +427,12 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
       <main className="flex-1 p-4 pt-5 overflow-y-auto">
         {currentPage === "dashboard" && <DashboardView onNavigate={setCurrentPage} />}
         {currentPage === "neworder" && <QuickOrderView onOrderSaved={() => setCurrentPage("orders")} />}
-        {currentPage === "invoices" && <InvoicesView />} {/* <-- ADDED HERE */}
+        {currentPage === "invoices" && <InvoicesView />} 
         {currentPage === "orders" && <OrdersView onNavigate={setCurrentPage} />}
         {currentPage === "products" && <ProductsView />}
-
+        {currentPage === "customers" && <CustomersView />} {/* <-- ADDED ROUTE HERE */}
         {currentPage === "inventory" && <InventoryView />}
-        
+
         {currentPage === "reports" && <ReportsView onNavigate={setCurrentPage} />}
         {currentPage.startsWith("recipe-") && (
           <RecipeBuilderView

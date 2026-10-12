@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useBakery, Order } from "../context/BakeryContext";
+import { formatToUniversalDate } from "../lib/dateUtils";
 
 export const InvoicesView: React.FC = () => {
   const { orders, shopSettings, markOrderCompleted, deleteOrder } = useBakery();
@@ -89,21 +90,36 @@ export const InvoicesView: React.FC = () => {
         ) : (
           Object.entries(pendingOrders).map(([orderId, lines]) => {
             const customer = lines[0].customer;
-            const deliveryDate = lines[0].delivery_date;
+            const deliveryDate = formatToUniversalDate(lines[0].delivery_date);
             const phone = lines[0].phone;
             const totalDue = lines.reduce((sum, l) => sum + l.pending_payment, 0);
 
             return (
-              <div key={orderId} onClick={() => setSelectedOrderId(orderId)} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md transition cursor-pointer flex justify-between items-center">
-                <div>
+              <div key={orderId} onClick={() => setSelectedOrderId(orderId)} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md transition cursor-pointer flex justify-between items-center relative">
+
+                {/* QUICK DELETE BUTTON */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation(); // Stops the card click event so the preview modal doesn't open
+                    if (window.confirm("🚨 Are you sure you want to permanently DELETE this order? This action cannot be undone.")) {
+                      deleteOrder(orderId);
+                    }
+                  }}
+                  title="Delete Order"
+                  className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition font-black text-xs"
+                >
+                  ✕
+                </button>
+
+                <div className="pr-4">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{orderId}</span>
                     {totalDue === 0 && <span className="text-[9px] font-black text-emerald-600 uppercase bg-emerald-50 px-1.5 py-0.5 rounded">Paid</span>}
                   </div>
-                  <h4 className="font-bold text-gray-900 leading-tight">{customer}</h4>
+                  <h4 className="font-bold text-gray-900 leading-tight pr-4">{customer}</h4>
                   <p className="text-[10px] text-gray-500 font-medium">{phone || "No Phone"}</p>
                 </div>
-                <div className="text-right">
+                <div className="text-right pl-4 mt-2">
                   <span className="text-[10px] text-gray-400 block mb-1">Del: {deliveryDate}</span>
                   <span className={`text-xs font-black px-2 py-1 rounded ${totalDue > 0 ? 'bg-rose-50 text-rose-600' : 'bg-gray-100 text-gray-600'}`}>
                     {totalDue > 0 ? `Due: ${CURRENCY} ${totalDue.toFixed(2)}` : 'Paid in Full'}
@@ -150,9 +166,8 @@ export const InvoicesView: React.FC = () => {
               <div className="text-xs space-y-1 mb-4 text-black">
                 <div className="flex justify-between"><span className="font-medium">Customer:</span> <span className="font-bold">{firstLine.customer}</span></div>
                 <div className="flex justify-between"><span className="font-medium">Phone:</span> <span className="font-bold">{firstLine.phone || 'N/A'}</span></div>
-                <div className="flex justify-between"><span className="font-medium">Delivery Date:</span> <span className="font-bold">{firstLine.delivery_date}</span></div>
+                <div className="flex justify-between"><span className="font-medium">Delivery Date:</span> <span className="font-bold">{formatToUniversalDate(firstLine.delivery_date)}</span></div>
                 <div className="flex justify-between"><span className="font-medium">Location:</span> <span className="font-bold text-right max-w-[150px] truncate">{firstLine.location}</span></div>
-                {/* --- ADDED: PAYMENT METHOD NOW PRINTS ON DISPATCH INVOICE --- */}
                 <div className="flex justify-between"><span className="font-medium">Payment:</span> <span className="font-bold">{firstLine.payment_method || 'Cash'}</span></div>
               </div>
 

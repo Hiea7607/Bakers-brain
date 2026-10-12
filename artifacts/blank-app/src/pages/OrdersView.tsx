@@ -57,27 +57,29 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
 
   // ============================================================================
   // BULLETPROOF STRING-BASED DATE ROUTING ENGINE
-  // Compares exact YYYY-MM-DD values to prevent timezone and midnight bugs
   // ============================================================================
-  const todayStr = useMemo(() => {
+  // Calculated on the fly so it automatically rolls over at midnight 
+  // even if the app is left open overnight!
+  const getTodayStr = () => {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
-  }, []);
+  };
 
   const filteredGroups = groupedOrders.filter((group) => {
     // If the card is hidden by the user, do not render it
     if (hiddenCards.includes(group.id)) return false; 
 
-    // Extract the YYYY-MM-DD portion safely from the database date string
+    const todayStr = getTodayStr();
     const itemDate = group.delivery_date ? String(group.delivery_date).substring(0, 10) : "";
 
-    const isToday = itemDate === todayStr;
+    // THE FIX: "Today's Queue" now catches Today AND any missed/overdue orders from the past!
+    const isTodayOrPast = itemDate <= todayStr;
     const isFuture = itemDate > todayStr;
 
-    if (activeTab === "Pending") return group.status === "Pending" && isToday;
+    if (activeTab === "Pending") return group.status === "Pending" && isTodayOrPast;
     if (activeTab === "Upcoming") return group.status === "Pending" && isFuture;
     if (activeTab === "Completed") return group.status === "Completed" || group.status === "Paid";
     if (activeTab === "All") return true;

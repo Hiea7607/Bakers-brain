@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { useBakery, ParsedOrder, ParsedOrderItem, ShelfItem, Product } from "../context/BakeryContext";
+import { useBakery, ParsedOrder, ParsedOrderItem, ShelfItem, Product, standardizeDateString } from "../context/BakeryContext";
+import { formatToUniversalDate } from "../lib/dateUtils";
 
 export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: ParsedOrder | null }> = ({ onOrderSaved, initialCart }) => {
   const { products, createOrder, customers, shelfStock, logWaste, shopSettings } = useBakery();
@@ -78,11 +79,14 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
     const autoVatAmount = parseFloat(((subtotal * globalVatRate) / 100).toFixed(2));
     const grandTotal = subtotal + autoVatAmount;
 
+    // THE FIX: Forces POS orders to output strict "10 Oct 2026"
+    const beautifulTodayDate = formatToUniversalDate(standardizeDateString("today"));
+
     setParsed({
       customer: "Walk-In Customer", phone: "", email: "", location: "Store Front",
       items: Object.values(consolidatedItems), subtotal, deliveryCharge: 0, vatAmount: autoVatAmount, discountAmount: 0,
       total: grandTotal, advancePaid: grandTotal, pendingPayment: 0, cost: totalCost, profit: grandTotal - totalCost,
-      deliveryDate: new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date()), 
+      deliveryDate: beautifulTodayDate, 
       paymentMethod: "Cash", 
       orderType: "Walk-in"
     });
@@ -101,7 +105,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
       let customer = isSelf ? "Self" : "Online Customer";
       let phone = isSelf ? "N/A" : "";
       let location = isSelf ? "Display Shelf" : "Direct Pickup";
-      let email = "", rawDateStr = "Today", extractedPaymentMethod = ""; // Added variable
+      let email = "", rawDateStr = "today", extractedPaymentMethod = ""; 
       let deliveryCharge = 0, textVatRate = 0, advancePaid = 0, discountAmount = 0;
 
       const extractedItems: ParsedOrderItem[] = [];
@@ -116,18 +120,10 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
           else if (lower.startsWith("phone:") || lower.startsWith("mobile:")) phone = line.split(":")[1]?.trim() || phone;
           else if (lower.startsWith("address:") || lower.startsWith("location:")) location = line.split(":")[1]?.trim() || location;
           else if (lower.startsWith("email:")) email = line.split(":")[1]?.trim() || email;
-            else if (lower.startsWith("date:") || lower.startsWith("delivery date:")) {
-              const parsedDateInput = line.split(":")[1]?.trim() || "";
-
-              // If user typed a standard DD/MM/YYYY or D/M/YYYY format (e.g., 6/10/2026)
-              const dmyMatch = parsedDateInput.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-              if (dmyMatch) {
-                const [, day, month, year] = dmyMatch;
-                rawDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-              } else {
-                rawDateStr = parsedDateInput;
-              }
-            }
+          else if (lower.startsWith("date:") || lower.startsWith("delivery date:")) {
+            // THE FIX: Grab the text exactly as they typed it (e.g. "tomorrow", "10-10-2026")
+            rawDateStr = line.split(":")[1]?.trim() || "today";
+          }
           else if (lower.startsWith("delivery") && (lower.includes("charge") || lower.includes("cost"))) deliveryCharge = parseFloat((line.match(/[\d\.]+/) || ["0"])[0]);
           else if (lower.startsWith("vat:")) textVatRate = parseFloat((line.match(/[\d\.]+/) || ["0"])[0]);
           else if (lower.startsWith("advance") || lower.startsWith("paid:")) advancePaid = parseFloat((line.match(/[\d\.]+/) || ["0"])[0]);
@@ -136,7 +132,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
             extractedPaymentMethod = line.split(":")[1]?.trim() || "";
           }
         }
-        
+
         const isMetaLine = lower.startsWith("delivery") || lower.startsWith("vat:") || lower.startsWith("advance") || lower.startsWith("paid:") || lower.startsWith("discount:") || lower.startsWith("customer:") || lower.startsWith("name:") || lower.startsWith("phone:") || lower.startsWith("mobile:") || lower.startsWith("address:") || lower.startsWith("location:") || lower.startsWith("date:") || lower.startsWith("items:") || lower.startsWith("email:") || lower.startsWith("payment method:");
 
         if (!isMetaLine && line.length > 1) {
@@ -189,11 +185,14 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
 
       const grandTotal = subtotal + deliveryCharge + autoVatAmount - discountAmount;
 
+      // THE FIX: Translates whatever they typed into the beautiful format instantly
+      const beautifulParsedDate = formatToUniversalDate(standardizeDateString(rawDateStr));
+
       setParsed({
         customer: customer || lines[0] || "Online Customer", phone, email, items: extractedItems, subtotal, deliveryCharge, vatAmount: autoVatAmount, discountAmount,
         total: grandTotal, advancePaid, pendingPayment: Math.max(0, grandTotal - advancePaid), cost: totalCost, profit: grandTotal - totalCost,
-        location, deliveryDate: rawDateStr, 
-        paymentMethod: extractedPaymentMethod || (advancePaid > 0 ? "bKash" : "Cash"), // Uses your text input first!
+        location, deliveryDate: beautifulParsedDate, 
+        paymentMethod: extractedPaymentMethod || (advancePaid > 0 ? "bKash" : "Cash"), 
         orderType: isSelf ? "Walk-in" : "Online" 
       });
 
@@ -473,11 +472,18 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                             <input type="email" value={parsed.email || ""} onChange={(e) => setParsed({...parsed, email: e.target.value})} className="w-full border border-gray-200 rounded-lg p-2 bg-white font-medium text-gray-800" placeholder="Email address..." />
                           </div>
                           <div>
-                             {/* DYNAMIC LABEL FOR SCREEN PREVIEW */}
                              <label className="text-[10px] font-bold text-gray-500 block mb-1">
                                {parsed.orderType === 'Online' ? 'Delivery Date' : 'Date'}
                              </label>
-                             <input type="text" value={parsed.deliveryDate} onChange={(e) => setParsed({...parsed, deliveryDate: e.target.value})} className="w-full border border-gray-200 rounded-lg p-2 bg-white font-medium text-gray-800" placeholder="Today" />
+                             {/* THE FIX: THE MAGIC INPUT BOX (onBlur auto-corrects to the beautiful format!) */}
+                             <input 
+                               type="text" 
+                               value={parsed.deliveryDate} 
+                               onChange={(e) => setParsed({...parsed, deliveryDate: e.target.value})} 
+                               onBlur={(e) => setParsed({...parsed, deliveryDate: formatToUniversalDate(standardizeDateString(e.target.value))})}
+                               className="w-full border border-gray-200 rounded-lg p-2 bg-white font-medium text-gray-800 focus:ring-2 focus:ring-indigo-400" 
+                               placeholder="10 Oct 2026" 
+                             />
                           </div>
                       </div>
                   </div>
@@ -572,7 +578,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
         /* --- THE PRINTABLE INVOICE WRAPPER --- */
         <div id="printable-invoice-container" className="space-y-3 p-4 bg-white rounded-xl shadow-lg border border-gray-200 max-w-sm mx-auto font-sans relative">
 
-          {/* NEW TOP-RIGHT CLOSE BUTTON */}
           <button onClick={handleStayOnPageReset} className="absolute -top-3 -right-3 bg-gray-100 text-gray-600 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-full font-bold text-[10px] shadow border border-gray-200 transition hide-on-print">✕ Close</button>
 
           {parsed?.customer === 'Self' ? (
@@ -585,7 +590,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
               </div>
 
               <div className="print:block print:w-[80mm] print:mx-auto">
-                {/* LOOP: Creates ONE physical tag for EVERY item in the quantity count */}
                 {parsed.items.flatMap((item, itemIdx) => 
                   Array.from({ length: item.quantity }).map((_, qtyIdx) => {
                     const today = new Date();
@@ -600,7 +604,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                       <div key={`${itemIdx}-${qtyIdx}`} className="print:w-full print:border-b-2 print:border-dashed print:border-black print:pb-6 print:mb-6 print:break-inside-avoid">
                         <h2 className="text-center font-black text-lg uppercase tracking-widest text-black mb-1">{businessName}</h2>
 
-                        {/* NO QUANTITY MULTIPLIER HERE - JUST THE RAW ITEM NAME */}
                         <h3 className="text-center font-bold text-2xl text-black mb-1 leading-tight">{item.productName}</h3>
 
                         <div className="text-[13px] font-bold text-black space-y-1 bg-gray-100 p-2 rounded-lg print:bg-transparent print:border print:border-black print:p-2 mt-4">
@@ -613,12 +616,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                     );
                   })
                 )}
-              </div>
-
-              <div className="bg-indigo-50 p-4 rounded-xl text-left print:hidden mb-4">
-                <p className="text-xs font-bold text-indigo-600">
-                  Tag Preview ({parsed.items.reduce((acc, curr) => acc + curr.quantity, 0)} total tags generating...)
-                </p>
               </div>
             </div>
           ) : (
@@ -652,9 +649,9 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                     <div className="flex justify-between"><span className="font-medium">Phone:</span> <span className="font-bold">{parsed.phone || 'N/A'}</span></div>
                     <div className="flex justify-between"><span className="font-medium">Location:</span> <span className="font-bold text-right max-w-[160px] truncate">{parsed.location}</span></div>
 
-                    {/* DYNAMIC DATE LINE ADDED HERE */}
                     <div className="flex justify-between">
                       <span className="font-medium">{parsed.orderType === 'Online' ? 'Delivery Date:' : 'Date:'}</span> 
+                      {/* THE FIX: Invoice directly renders the locked-in beautiful date state */}
                       <span className="font-bold">{parsed.deliveryDate}</span>
                     </div>
 
@@ -729,7 +726,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
             </div>
           )}
 
-          {/* --- INTERACTIVE BUTTONS (THESE DO NOT PRINT) --- */}
           <div className="flex gap-2 pt-6 hide-on-print">
             <button onClick={() => window.print()} className="flex-1 bg-gray-800 hover:bg-black text-white font-bold py-3.5 rounded-xl text-xs shadow transition flex items-center justify-center gap-2">🖨️ Print</button>
             {parsed?.customer !== 'Self' && (

@@ -1,376 +1,685 @@
-import React, { useState, useMemo } from "react";
-import { useBakery, Order } from "../context/BakeryContext";
-import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
-} from 'recharts';
+import React, { useState, useMemo, useEffect } from "react";
+import { useBakery } from "../context/BakeryContext";
+import { formatToUniversalDate } from "../lib/dateUtils";
 
-export const ReportsView: React.FC<{ onNavigate: (page: string) => void }> = () => {
-  const { orders, ingredients, purchases, customers, shopSettings } = useBakery();
+export const ReportsView: React.FC<{ onNavigate?: (page: string) => void }> = () => {
+  const { orders, shopSettings, products, purchases = [], ingredients = [] } = useBakery();
   const CURRENCY = shopSettings?.currency_symbol || "৳";
 
-  const [activeTab, setActiveTab] = useState<"BI Hub" | "Customers">("BI Hub");
-  const [selectedIngredient, setSelectedIngredient] = useState<string>('');
-  const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<any | null>(null);
+  // ============================================================================
+  // GLOBAL DATE RANGE ENGINE
+  // ============================================================================
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    return d.toISOString().split('T')[0];
+  });
 
-  const [receiptToPrint, setReceiptToPrint] = useState<Order[] | null>(null);
-  const businessName = localStorage.getItem("bb_business_name") || shopSettings?.shop_name || "BUSINESS BRAIN";
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
-  useMemo(() => {
-    if (!selectedIngredient && ingredients.length > 0) {
-      setSelectedIngredient(ingredients[0].code);
-    }
-  }, [ingredients, selectedIngredient]);
+  const formatForDisplay = (isoDate: string) => {
+    if (!isoDate) return "";
+    const [year, month, day] = isoDate.split("-");
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return `${day} ${months[parseInt(month, 10) - 1]} ${year}`;
+  };
 
-  const revenueData = useMemo(() => {
-    const dataMap = new Map();
-    const now = new Date();
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(now.getTime());
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().slice(0, 10);
-      dataMap.set(dateStr, { 
-        date: new Intl.DateTimeFormat('en-GB', { month: 'short', day: 'numeric' }).format(d), 
-        revenue: 0 
-      });
-    }
+  // ============================================================================
+  // ENGINE 1: DYNAMIC REALIZED PROFIT
+  // ============================================================================
+  const { currentTrend, currentTotal, growthPercent } = useMemo(() => {
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    const durationMs = end.getTime() - start.getTime();
+    const prevStart = new Date(start.getTime() - durationMs - 1);
+    const prevEnd = new Date(start.getTime() - 1);
+
+    const daily: Record<string, { profit: number; dateObj: Date }> = {};
+    let currTotal = 0;
+    let prevTotal = 0;
+
     orders.forEach(o => {
-      if (o.status !== 'Completed') return;
-      const orderDate = o.delivery_date ? new Date(o.delivery_date) : new Date(o.date);
-      const effectiveDate = o.delivery_date && o.delivery_date.length === 10 
-        ? new Date(`${o.delivery_date}T00:00:00`) 
-        : orderDate;
-      const dateStr = effectiveDate.toISOString().slice(0, 10);
-      if (dataMap.has(dateStr)) dataMap.get(dateStr).revenue += o.total;
-    });
-    return Array.from(dataMap.values());
-  }, [orders]);
+      if (o.customer.toLowerCase() === "self") return;
+      const isCompleted = o.status === "Completed" || o.status === "Paid";
+      if (!isCompleted) return; 
 
-  const topProductsData = useMemo(() => {
-    const productMap: Record<string, number> = {};
-    orders.forEach(o => {
-      productMap[o.product_name] = (productMap[o.product_name] || 0) + o.quantity;
+      const rawDate = new Date(o.delivery_date || o.date);
+      const t = rawDate.getTime();
+
+      if (t >= start.getTime() && t <= end.getTime()) {
+        currTotal += (o.profit || 0);
+        const dateKey = formatToUniversalDate(rawDate); 
+        if (!daily[dateKey]) daily[dateKey] = { profit: 0, dateObj: rawDate };
+        daily[dateKey].profit += (o.profit || 0);
+      } 
+      else if (t >= prevStart.getTime() && t <= prevEnd.getTime()) {
+        prevTotal += (o.profit || 0);
+      }
     });
-    return Object.entries(productMap)
-      .map(([name, quantity]) => ({ name, quantity }))
-      .sort((a, b) => b.quantity - a.quantity)
+
+    const trend = Object.entries(daily).sort((a, b) => a[1].dateObj.getTime() - b[1].dateObj.getTime());
+    let growth = 0;
+    if (prevTotal === 0 && currTotal > 0) growth = 100;
+    else if (prevTotal > 0) growth = ((currTotal - prevTotal) / prevTotal) * 100;
+
+    return { currentTrend: trend, currentTotal: currTotal, growthPercent: growth };
+  }, [orders, startDate, endDate]);
+
+  const maxProfit = Math.max(...currentTrend.map(d => d[1].profit), 1);
+
+  const generateSmoothPath = (data: typeof currentTrend) => {
+    if (data.length === 0) return "";
+    if (data.length === 1) return `M 50,${100 - (data[0][1].profit / maxProfit) * 100} L 50,100`;
+
+    let path = `M 0,${100 - (data[0][1].profit / maxProfit) * 100} `;
+    for (let i = 0; i < data.length - 1; i++) {
+      const x1 = (i / (data.length - 1)) * 100;
+      const y1 = 100 - (data[i][1].profit / maxProfit) * 100;
+      const x2 = ((i + 1) / (data.length - 1)) * 100;
+      const y2 = 100 - (data[i + 1][1].profit / maxProfit) * 100;
+      const cp1x = x1 + (x2 - x1) / 2;
+      const cp2x = x1 + (x2 - x1) / 2;
+      path += `C ${cp1x},${y1} ${cp2x},${y2} ${x2},${y2} `;
+    }
+    return path;
+  };
+
+  const linePath = generateSmoothPath(currentTrend);
+  const fillPath = `${linePath} L 100,100 L 0,100 Z`;
+
+  const xAxisLabels = currentTrend.filter((_, i) => 
+    i === 0 || 
+    i === Math.floor(currentTrend.length * 0.33) || 
+    i === Math.floor(currentTrend.length * 0.66) || 
+    i === currentTrend.length - 1
+  );
+
+  // ============================================================================
+  // ENGINE 2: TOP SELLERS (VOLUME)
+  // ============================================================================
+  const topSellers = useMemo(() => {
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    const metrics: Record<string, number> = {};
+
+    orders.forEach(o => {
+      if (o.customer.toLowerCase() === "self") return;
+      const isCompleted = o.status === "Completed" || o.status === "Paid";
+      if (!isCompleted) return;
+
+      const rawDate = new Date(o.delivery_date || o.date);
+      const t = rawDate.getTime();
+
+      if (t >= start.getTime() && t <= end.getTime()) {
+        if (!metrics[o.product_name]) metrics[o.product_name] = 0;
+        metrics[o.product_name] += o.quantity;
+      }
+    });
+
+    return Object.entries(metrics)
+      .map(([name, qty]) => ({ name, qty }))
+      .sort((a, b) => b.qty - a.qty)
       .slice(0, 5);
-  }, [orders]);
+  }, [orders, startDate, endDate]);
 
-  const costDriversData = useMemo(() => {
-    if (!selectedIngredient) return [];
-    const ingredientPurchases = purchases
-      .filter(p => p.code === selectedIngredient)
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    return ingredientPurchases.map(p => {
-      const d = new Date(p.date);
-      const formattedDate = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(d);
+  // ============================================================================
+  // ENGINE 5: TOP PROFIT DRIVERS (NET PROFIT)
+  // ============================================================================
+  const topProfitDrivers = useMemo(() => {
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    const metrics: Record<string, number> = {};
+
+    orders.forEach(o => {
+      if (o.customer.toLowerCase() === "self") return;
+      const isCompleted = o.status === "Completed" || o.status === "Paid";
+      if (!isCompleted) return;
+
+      const rawDate = new Date(o.delivery_date || o.date);
+      const t = rawDate.getTime();
+
+      if (t >= start.getTime() && t <= end.getTime()) {
+        if (!metrics[o.product_name]) metrics[o.product_name] = 0;
+        metrics[o.product_name] += (o.profit || 0);
+      }
+    });
+
+    return Object.entries(metrics)
+      .map(([name, profit]) => ({ name, profit }))
+      .sort((a, b) => b.profit - a.profit)
+      .slice(0, 5);
+  }, [orders, startDate, endDate]);
+
+  // ============================================================================
+  // ENGINE 3: INDIVIDUAL PRODUCT TREND (DAILY)
+  // ============================================================================
+  const availableProducts = useMemo(() => {
+    if (products && products.length > 0) {
+      return products.map((p: any) => p.name).sort();
+    }
+    const prodSet = new Set<string>();
+    orders.forEach(o => {
+      if (o.product_name) prodSet.add(o.product_name);
+    });
+    return Array.from(prodSet).sort();
+  }, [products, orders]);
+
+  const [selectedProduct, setSelectedProduct] = useState<string>("");
+
+  useEffect(() => {
+    if (!selectedProduct && availableProducts.length > 0) {
+      setSelectedProduct(availableProducts[0]);
+    }
+  }, [availableProducts, selectedProduct]);
+
+  const productTrend = useMemo(() => {
+    if (!selectedProduct) return { data: [], total: 0, average: "0.0", maxQty: 1 };
+
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    const data = [];
+    let totalQty = 0;
+    let daysCount = 0;
+
+    let currentDate = new Date(start);
+
+    while (currentDate <= end) {
+      daysCount++;
+      const dateKey = formatToUniversalDate(currentDate);
+      const dayOfWeek = currentDate.toLocaleDateString('en-US', { weekday: 'short' }); 
+
+      let dayQty = 0;
+      orders.forEach(o => {
+        if (o.customer.toLowerCase() === "self" || o.product_name !== selectedProduct) return;
+        const isCompleted = o.status === "Completed" || o.status === "Paid";
+        if (!isCompleted) return;
+
+        const rawDate = new Date(o.delivery_date || o.date);
+        if (formatToUniversalDate(rawDate) === dateKey) {
+          dayQty += o.quantity;
+        }
+      });
+
+      totalQty += dayQty;
+      data.push({
+        dateKey,
+        dayName: dayOfWeek,
+        isFriday: dayOfWeek === 'Fri',
+        qty: dayQty,
+        shortDate: currentDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+      });
+
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    const maxQty = Math.max(...data.map(d => d.qty), 1);
+    const average = daysCount > 0 ? (totalQty / daysCount).toFixed(1) : "0.0";
+
+    return { data, total: totalQty, average, maxQty };
+  }, [orders, startDate, endDate, selectedProduct]);
+
+  // ============================================================================
+  // ENGINE 4: INGREDIENT COST HISTORY (TRANSACTION PLOTTING)
+  // ============================================================================
+  const availableIngredients = useMemo(() => {
+    if (ingredients && ingredients.length > 0) {
+      return ingredients.map((i: any) => i.name).sort();
+    }
+    const names = new Set<string>();
+    purchases.forEach((p: any) => {
+      if (p.name) names.add(p.name);
+    });
+    return Array.from(names).sort();
+  }, [ingredients, purchases]);
+
+  const [selectedIngredient, setSelectedIngredient] = useState<string>("");
+
+  useEffect(() => {
+    if (!selectedIngredient && availableIngredients.length > 0) {
+      setSelectedIngredient(availableIngredients[0]);
+    }
+  }, [availableIngredients, selectedIngredient]);
+
+  const ingredientTrend = useMemo(() => {
+    if (!selectedIngredient || purchases.length === 0) return { data: [], currentPrice: 0, priceChange: 0, maxCost: 1, minCost: 0, path: "" };
+
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    const validPurchases = purchases.filter((p: any) => {
+      if (p.name !== selectedIngredient) return false;
+      const pDate = new Date(p.date || p.purchase_date);
+      return pDate.getTime() >= start.getTime() && pDate.getTime() <= end.getTime();
+    }).sort((a: any, b: any) => new Date(a.date || a.purchase_date).getTime() - new Date(b.date || b.purchase_date).getTime());
+
+    const data = validPurchases.map((p: any) => {
+      const rawDate = new Date(p.date || p.purchase_date);
       return {
-        date: formattedDate,
-        price: p.unit_price,
+        dateKey: formatToUniversalDate(rawDate),
+        shortDate: rawDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' }),
+        cost: Number(p.unit_price || p.cost || 0),
       };
     });
-  }, [purchases, selectedIngredient]);
 
+    const costs = data.map(d => d.cost);
+    const maxCost = costs.length > 0 ? Math.max(...costs) * 1.05 : 1; 
+    const minCost = costs.length > 0 ? Math.min(...costs) * 0.95 : 0; 
+
+    let currentPrice = 0;
+    let priceChange = 0; 
+    if (data.length > 0) {
+      currentPrice = data[data.length - 1].cost;
+      if (data.length > 1) {
+        const previousPrice = data[data.length - 2].cost;
+        if (previousPrice > 0) {
+          priceChange = ((currentPrice - previousPrice) / previousPrice) * 100;
+        }
+      }
+    }
+
+    let path = "";
+    if (data.length > 1) {
+      path = `M 0,${100 - ((data[0].cost - minCost) / (maxCost - minCost)) * 100} `;
+      for (let i = 0; i < data.length - 1; i++) {
+        const x2 = ((i + 1) / (data.length - 1)) * 100;
+        const y2 = 100 - ((data[i + 1].cost - minCost) / (maxCost - minCost)) * 100;
+        path += `L ${x2},${y2} `;
+      }
+    }
+
+    return { data, currentPrice, priceChange, maxCost, minCost, path };
+  }, [purchases, startDate, endDate, selectedIngredient]);
+
+
+  // ============================================================================
+  // VISUAL RENDER (UI)
+  // ============================================================================
   return (
-    <div className="space-y-5 pb-24 px-4 max-w-md mx-auto">
-      <div className="flex justify-between items-center pt-4">
-        <h2 className="text-xl font-extrabold text-gray-900 flex items-center gap-2 tracking-tight">
-          <span>📈</span> Business Intelligence Hub
-        </h2>
-      </div>
+    <div className="pb-24 w-full max-w-4xl mx-auto relative">
 
-      <div className="flex bg-gray-200 p-1 rounded-xl text-xs font-bold text-gray-600">
-        {(["BI Hub", "Customers"] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-2.5 rounded-lg transition ${
-              activeTab === tab ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-900"
-            }`}
+      {/* GLOBAL PAGE HEADER & MASTER CALENDAR */}
+      <div className="fixed top-[60px] left-1/2 -translate-x-1/2 w-full max-w-md z-40 bg-gray-50 pt-1 pb-3 px-4 flex flex-col gap-3">
+        <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Business Intelligence</h1>
+
+        <div className="relative self-start w-full sm:w-max">
+          <button 
+            onClick={() => setShowDatePicker(!showDatePicker)}
+            className="bg-white border border-gray-200 shadow-sm hover:bg-gray-50 transition text-gray-700 text-[11px] font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer w-full justify-center sm:justify-start"
           >
-            {tab === "BI Hub" ? "📊 BI Analytics" : "👥 Customers"}
+            📅 {formatForDisplay(startDate)} - {formatForDisplay(endDate)}
           </button>
-        ))}
+
+          {showDatePicker && (
+            <div className="absolute top-full left-0 mt-2 bg-white border border-gray-200 rounded-xl shadow-2xl p-4 z-[60] flex flex-col gap-3 w-64">
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Start Date</label>
+                <div className="relative">
+                  <div className="w-full bg-gray-50 border border-gray-200 text-sm font-bold rounded-lg px-3 py-2 text-gray-800 flex justify-between items-center pointer-events-none">
+                    {formatForDisplay(startDate)}
+                    <span className="text-gray-400 text-xs">▼</span>
+                  </div>
+                  <input 
+                    type="date" 
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">End Date</label>
+                <div className="relative">
+                  <div className="w-full bg-gray-50 border border-gray-200 text-sm font-bold rounded-lg px-3 py-2 text-gray-800 flex justify-between items-center pointer-events-none">
+                    {formatForDisplay(endDate)}
+                    <span className="text-gray-400 text-xs">▼</span>
+                  </div>
+                  <input 
+                    type="date" 
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowDatePicker(false)}
+                className="w-full bg-indigo-600 text-white font-bold text-xs py-2.5 rounded-lg mt-1 hover:bg-indigo-700 transition"
+              >
+                Apply Dates
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
-      {activeTab === "BI Hub" && (
-        <div className="space-y-4">
-          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">30-Day Revenue Trend</h3>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={revenueData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis dataKey="date" tick={{fontSize: 10, fill: '#9ca3af'}} tickLine={false} axisLine={false} minTickGap={20} />
-                  <YAxis tick={{fontSize: 10, fill: '#9ca3af'}} tickLine={false} axisLine={false} tickFormatter={(val) => `${CURRENCY}${val}`} width={40} />
-                  <Tooltip contentStyle={{ fontSize: '12px', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                  <Line type="monotone" dataKey="revenue" stroke="#0f172a" strokeWidth={3} dot={false} activeDot={{ r: 6 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+      {/* CHARTS CONTAINER */}
+      <div className="flex flex-col space-y-6 relative z-10 pt-[115px]">
 
-          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Top 5 Products</h3>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topProductsData} layout="vertical" margin={{ left: 10, right: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="name" type="category" tick={{fontSize: 10, fill: '#4b5563', fontWeight: 600}} tickLine={false} axisLine={false} width={90} />
-                  <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{ fontSize: '12px', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                  <Bar dataKey="quantity" fill="#0f172a" radius={[0, 4, 4, 0]} barSize={20} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Multi-Year Cost Drivers</h3>
-                <p className="text-[10px] text-gray-400">Track raw material price trends over time</p>
+        {/* CHART 1: REALIZED PROFIT (LINE) */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 sm:p-6 w-full">
+          <div className="flex justify-between items-start mb-6 relative">
+            <div>
+              <h3 className="text-sm font-bold text-gray-900">Realized Profit Trend</h3>
+              <div className="flex items-center gap-3 mt-1">
+                <p className="text-3xl font-black text-gray-900">{CURRENCY} {currentTotal.toFixed(2)}</p>
               </div>
-              <select 
-                className="bg-gray-50 border border-gray-200 text-xs font-bold text-gray-700 rounded-lg px-2 py-1.5 outline-none focus:ring-2 focus:ring-gray-900 cursor-pointer max-w-[140px] truncate"
-                value={selectedIngredient}
-                onChange={(e) => setSelectedIngredient(e.target.value)}
-              >
-                {ingredients.map(item => (
-                  <option key={item.code} value={item.code}>{item.name}</option>
-                ))}
-              </select>
+              <p className="text-xs text-gray-500 font-medium mt-1">Total for Selected Period</p>
             </div>
+            <div className="flex flex-col items-end gap-2">
+              <span className={`text-[10px] font-bold px-2 py-1 rounded ${
+                growthPercent > 0 ? 'bg-emerald-100 text-emerald-700' : 
+                growthPercent < 0 ? 'bg-rose-100 text-rose-700' : 
+                'bg-gray-100 text-gray-500'
+              }`}>
+                {growthPercent > 0 ? '+' : ''}{growthPercent.toFixed(1)}% vs prior period
+              </span>
+            </div>
+          </div>
 
-            <div className="h-56">
-              {costDriversData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={costDriversData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                    <XAxis dataKey="date" tick={{fontSize: 9, fill: '#9ca3af'}} tickLine={false} axisLine={false} />
-                    <YAxis tick={{fontSize: 10, fill: '#9ca3af'}} tickLine={false} axisLine={false} tickFormatter={(val) => `${CURRENCY}${val}`} width={40} />
-                    <Tooltip 
-                      contentStyle={{ fontSize: '12px', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} 
-                      formatter={(value: number) => [`${CURRENCY}${value}`, 'Unit Purchase Price']}
-                    />
-                    <Line type="monotone" dataKey="price" stroke="#059669" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 7 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex h-full items-center justify-center text-xs font-medium text-gray-400 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                  No purchase history for this item.
+          {currentTrend.length === 0 ? (
+            <div className="h-48 flex items-center justify-center text-gray-400 text-sm font-medium border-t border-gray-100 mt-6 relative z-10">
+              No completed orders found for these dates.
+            </div>
+          ) : (
+            <div className="relative w-full h-56 mt-6 z-10">
+              <div className="absolute inset-0 flex flex-col justify-between text-[10px] text-gray-400 font-medium pb-6 pointer-events-none z-0">
+                <span>{CURRENCY}{maxProfit.toFixed(0)}</span>
+                <span>{CURRENCY}{(maxProfit * 0.66).toFixed(0)}</span>
+                <span>{CURRENCY}{(maxProfit * 0.33).toFixed(0)}</span>
+                <span>{CURRENCY}0</span>
+              </div>
+              <div className="absolute inset-0 left-10 h-[calc(100%-24px)] overflow-visible">
+                <div className="absolute inset-0 flex flex-col justify-between z-0">
+                  <div className="border-t border-gray-100 w-full h-0"></div>
+                  <div className="border-t border-gray-100 w-full h-0"></div>
+                  <div className="border-t border-gray-100 w-full h-0"></div>
+                  <div className="border-t border-gray-100 w-full h-0"></div>
+                </div>
+                <svg className="w-full h-full overflow-visible absolute inset-0 z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="profitGradient" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#4f46e5" stopOpacity="0.4" />
+                      <stop offset="100%" stopColor="#4f46e5" stopOpacity="0.0" />
+                    </linearGradient>
+                  </defs>
+                  <path d={fillPath} fill="url(#profitGradient)" />
+                  <path d={linePath} fill="none" stroke="#4f46e5" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+                </svg>
+                {currentTrend.map(([date, data], idx) => {
+                  const x = (idx / (currentTrend.length - 1 || 1)) * 100;
+                  const y = 100 - (data.profit / maxProfit) * 100;
+                  let tooltipClass = "left-1/2 -translate-x-1/2";
+                  if (idx === 0) tooltipClass = "left-0 translate-x-0";
+                  if (idx === currentTrend.length - 1) tooltipClass = "right-0 -translate-x-0";
+                  return (
+                    <div key={idx} className="absolute group cursor-pointer z-20" style={{ left: `${x}%`, top: `${y}%`, transform: 'translate(-50%, -50%)' }}>
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center">
+                        <div className="w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full group-hover:scale-150 transition-transform shadow-sm"></div>
+                      </div>
+                      <div className={`absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white border border-gray-200 text-gray-900 text-xs font-bold px-3 py-1.5 rounded-lg shadow-xl whitespace-nowrap pointer-events-none flex flex-col items-center ${tooltipClass}`}>
+                        <span>{date.split(' ')[0]} {date.split(' ')[1]}</span>
+                        <span className="text-indigo-600">{CURRENCY}{data.profit.toFixed(2)} profit</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="absolute bottom-0 left-10 right-0 h-5">
+                {xAxisLabels.map(([date], idx) => {
+                  const x = (currentTrend.findIndex(p => p[0] === date) / (currentTrend.length - 1 || 1)) * 100;
+                  if (idx === xAxisLabels.length - 1) {
+                    return <span key={idx} className="absolute text-[10px] font-bold text-gray-400 bottom-0 whitespace-nowrap" style={{ right: '0px' }}>{date.split(' ')[0]} {date.split(' ')[1]}</span>;
+                  }
+                  let transform = idx === 0 ? "translateX(0)" : "translateX(-50%)";
+                  return <span key={idx} className="absolute text-[10px] font-bold text-gray-400 bottom-0 whitespace-nowrap" style={{ left: `${x}%`, transform }}>{date.split(' ')[0]} {date.split(' ')[1]}</span>;
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* CHART 2: TOP SELLERS (VOLUME) */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 sm:p-6 w-full">
+          <div className="flex justify-between items-end mb-6">
+            <div>
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Top Sellers (Volume)</h3>
+            </div>
+          </div>
+          <div className="space-y-5">
+            {topSellers.map((item, idx) => (
+              <div key={idx} className="relative">
+                <div className="flex justify-between text-sm font-bold text-gray-800 mb-1.5">
+                  <span><span className="text-gray-400 mr-2">{idx + 1}.</span>{item.name}</span>
+                  <span>{item.qty} units</span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                  <div 
+                    className="bg-indigo-500 h-3 rounded-full transition-all duration-700" 
+                    style={{ width: `${(item.qty / topSellers[0].qty) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
+            ))}
+            {topSellers.length === 0 && (
+              <p className="text-sm text-center font-medium text-gray-400 py-4">No product sales found for this period.</p>
+            )}
+          </div>
+        </div>
+
+        {/* CHART 5: TOP PROFIT DRIVERS */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 sm:p-6 w-full">
+          <div className="flex justify-between items-end mb-6">
+            <div>
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Top Profit Drivers (Net Profit)</h3>
+            </div>
+          </div>
+          <div className="space-y-5">
+            {topProfitDrivers.map((item, idx) => (
+              <div key={idx} className="relative">
+                <div className="flex justify-between text-sm font-bold text-gray-800 mb-1.5">
+                  <span><span className="text-gray-400 mr-2">{idx + 1}.</span>{item.name}</span>
+                  <span className="text-emerald-600">{CURRENCY} {item.profit.toFixed(2)}</span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                  <div 
+                    className="bg-emerald-500 h-3 rounded-full transition-all duration-700" 
+                    style={{ width: `${(item.profit / (topProfitDrivers[0]?.profit || 1)) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
+            ))}
+            {topProfitDrivers.length === 0 && (
+              <p className="text-sm text-center font-medium text-gray-400 py-4">No profit data found for this period.</p>
+            )}
+          </div>
+        </div>
+
+        {/* CHART 3: INDIVIDUAL PRODUCT TREND */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 sm:p-6 w-full">
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Product Sales Trend</h3>
+            </div>
+            <select 
+              value={selectedProduct} 
+              onChange={(e) => setSelectedProduct(e.target.value)}
+              className="bg-gray-50 border border-gray-200 text-gray-800 text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 max-w-[150px] truncate cursor-pointer"
+            >
+              {availableProducts.length === 0 && <option value="">No Products</option>}
+              {availableProducts.map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-4 mb-8 border-b border-gray-100 pb-4">
+            <div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase">Total Sold</p>
+              <p className="text-2xl font-black text-gray-900">{productTrend.total}</p>
+            </div>
+            <div className="border-l border-gray-200 pl-4">
+              <p className="text-[10px] font-bold text-gray-400 uppercase">Daily Avg</p>
+              <p className="text-lg font-bold text-gray-700">{productTrend.average}</p>
+            </div>
+          </div>
+
+          <div className="w-full overflow-x-auto pb-2">
+            <div className="min-w-full flex items-end h-48 gap-1.5 relative">
+              <div className="absolute inset-0 flex flex-col justify-between pointer-events-none z-0 pb-6">
+                <div className="border-t border-gray-100 w-full h-0"></div>
+                <div className="border-t border-gray-100 w-full h-0"></div>
+                <div className="border-t border-gray-100 w-full h-0"></div>
+                <div className="border-t border-gray-100 w-full h-0"></div>
+              </div>
+
+              {productTrend.data.map((day, idx) => {
+                const heightPct = (day.qty / productTrend.maxQty) * 100;
+                return (
+                  <div key={idx} className="flex-1 flex flex-col items-center justify-end h-full gap-2 group relative z-10 min-w-[28px]">
+                    <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg whitespace-nowrap pointer-events-none z-30">
+                      {day.shortDate}: {day.qty} units
+                    </div>
+                    <div className="w-full max-w-[20px] flex-1 bg-indigo-50/50 rounded-t-md flex items-end justify-center group-hover:bg-indigo-100 transition-colors">
+                      <div 
+                        className="w-full bg-indigo-500 rounded-t-md transition-all duration-500" 
+                        style={{ height: `${heightPct}%`, minHeight: day.qty > 0 ? '4px' : '0px' }}
+                      ></div>
+                    </div>
+                    <span className={`text-[9px] whitespace-nowrap ${day.isFriday ? 'text-rose-600 font-black' : 'text-gray-400 font-bold'}`}>
+                      {day.dayName}
+                    </span>
+                  </div>
+                );
+              })}
+
+              {productTrend.data.length === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center text-sm font-medium text-gray-400 z-20">
+                  No sales data found for selected dates.
                 </div>
               )}
             </div>
           </div>
         </div>
-      )}
 
-      {activeTab === "Customers" && (
-        <div className="space-y-3">
-          <p className="text-xs text-gray-400 mb-2">Tap any customer card to view complete purchase history.</p>
-          {customers.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-8">No customer history recorded yet.</p>
+        {/* CHART 4: INGREDIENT COST HISTORY */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 sm:p-6 w-full">
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Ingredient Cost History</h3>
+            </div>
+
+            <select 
+              value={selectedIngredient} 
+              onChange={(e) => setSelectedIngredient(e.target.value)}
+              className="bg-gray-50 border border-gray-200 text-gray-800 text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-rose-500 max-w-[150px] truncate cursor-pointer"
+            >
+              {availableIngredients.length === 0 && <option value="">No Purchases Found</option>}
+              {availableIngredients.map(ing => (
+                <option key={ing} value={ing}>{ing}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-4 mb-8 border-b border-gray-100 pb-4">
+            <div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase">Latest Unit Price</p>
+              <p className="text-2xl font-black text-gray-900">{CURRENCY} {ingredientTrend.currentPrice.toFixed(2)}</p>
+            </div>
+            <div className="border-l border-gray-200 pl-4 flex flex-col justify-center">
+              <span className={`text-[10px] font-bold px-2 py-1 rounded w-max ${
+                ingredientTrend.priceChange > 0 ? 'bg-rose-100 text-rose-700' : 
+                ingredientTrend.priceChange < 0 ? 'bg-emerald-100 text-emerald-700' : 
+                'bg-gray-100 text-gray-500'
+              }`}>
+                {ingredientTrend.priceChange > 0 ? '📈 Price Increased (' : ingredientTrend.priceChange < 0 ? '📉 Price Dropped (' : 'No Change'}
+                {ingredientTrend.priceChange !== 0 && `${ingredientTrend.priceChange > 0 ? '+' : ''}${Math.abs(ingredientTrend.priceChange).toFixed(1)}%)`}
+              </span>
+              <p className="text-[9px] text-gray-400 mt-1 font-medium tracking-wide">Since previous purchase</p>
+            </div>
+          </div>
+
+          {ingredientTrend.data.length < 2 ? (
+            <div className="h-48 flex items-center justify-center text-gray-400 text-sm font-medium relative z-10 text-center px-4">
+              Not enough transaction history found.<br/>Need at least 2 purchases to plot a trend line.
+            </div>
           ) : (
-            customers.map((c) => (
-              <div 
-                key={c.phone || c.name} 
-                onClick={() => setSelectedCustomerForModal(c)}
-                className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-3 hover:border-gray-300 transition cursor-pointer"
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="font-bold text-sm text-gray-900">{c.name}</h3>
-                    <p className="text-xs text-gray-400 font-mono">{c.phone}</p>
-                  </div>
-                  <span
-                    className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full ${
-                      c.tier === "Best"
-                        ? "bg-purple-100 text-purple-700"
-                        : c.tier === "Medium"
-                        ? "bg-blue-100 text-blue-700"
-                        : "bg-gray-100 text-gray-700"
-                    }`}
-                  >
-                    ⭐ {c.tier} Tier
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2.5 rounded-xl text-center text-xs border border-gray-100">
-                  <div>
-                    <span className="text-[10px] text-gray-400 block font-medium">Orders</span>
-                    <span className="font-bold text-gray-800">{c.totalOrders}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-gray-400 block font-medium">Total Spent</span>
-                    <span className="font-bold text-gray-800">{CURRENCY}{c.totalSpent}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-gray-400 block font-medium">Profit</span>
-                    <span className="font-bold text-emerald-600">{CURRENCY}{c.totalProfit}</span>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center text-[11px] text-gray-500 pt-1">
-                  <span>📍 {c.address}</span>
-                  <span className="text-indigo-600 font-bold hover:underline">View History →</span>
-                </div>
+            <div className="relative w-full h-56 mt-6 z-10">
+              <div className="absolute inset-0 flex flex-col justify-between text-[10px] text-gray-400 font-medium pb-6 pointer-events-none z-0">
+                <span>{CURRENCY}{ingredientTrend.maxCost.toFixed(2)}</span>
+                <span>{CURRENCY}{((ingredientTrend.maxCost + ingredientTrend.minCost) / 2).toFixed(2)}</span>
+                <span>{CURRENCY}{ingredientTrend.minCost.toFixed(2)}</span>
               </div>
-            ))
+
+              <div className="absolute inset-0 left-12 h-[calc(100%-24px)] overflow-visible">
+                <div className="absolute inset-0 flex flex-col justify-between z-0">
+                  <div className="border-t border-gray-100 w-full h-0"></div>
+                  <div className="border-t border-gray-100 w-full h-0"></div>
+                  <div className="border-t border-gray-100 w-full h-0"></div>
+                </div>
+
+                <svg className="w-full h-full overflow-visible absolute inset-0 z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <path d={ingredientTrend.path} fill="none" stroke="#ef4444" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+                </svg>
+
+                {ingredientTrend.data.map((d, idx) => {
+                  const x = (idx / (ingredientTrend.data.length - 1)) * 100;
+                  const y = 100 - ((d.cost - ingredientTrend.minCost) / (ingredientTrend.maxCost - ingredientTrend.minCost)) * 100;
+
+                  let tooltipClass = "left-1/2 -translate-x-1/2";
+                  if (idx === 0) tooltipClass = "left-0 translate-x-0";
+                  if (idx === ingredientTrend.data.length - 1) tooltipClass = "right-0 -translate-x-0";
+
+                  return (
+                    <div key={idx} className="absolute group cursor-pointer z-20" style={{ left: `${x}%`, top: `${y}%`, transform: 'translate(-50%, -50%)' }}>
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center">
+                        <div className="w-2 h-2 bg-white border-2 border-rose-500 rounded-full group-hover:scale-150 transition-transform shadow-sm"></div>
+                      </div>
+                      <div className={`absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white border border-gray-200 text-gray-900 text-xs font-bold px-3 py-1.5 rounded-lg shadow-xl whitespace-nowrap pointer-events-none flex flex-col items-center ${tooltipClass}`}>
+                        <span className="text-[10px] text-gray-400">{d.shortDate}</span>
+                        <span className="text-rose-600">{CURRENCY}{d.cost.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="absolute bottom-0 left-12 right-0 h-5">
+                {ingredientTrend.data.map((d, idx) => {
+                  if (idx !== 0 && idx !== ingredientTrend.data.length - 1 && idx !== Math.floor(ingredientTrend.data.length / 2)) return null;
+
+                  const x = (idx / (ingredientTrend.data.length - 1)) * 100;
+                  let transform = idx === 0 ? "translateX(0)" : idx === ingredientTrend.data.length - 1 ? "translateX(-100%)" : "translateX(-50%)";
+
+                  return (
+                    <span key={idx} className="absolute text-[9px] font-bold text-gray-400 bottom-0 whitespace-nowrap" style={{ left: idx === ingredientTrend.data.length - 1 ? '100%' : `${x}%`, transform }}>
+                      {d.shortDate}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
-      )}
 
-      {/* CUSTOMER PURCHASE HISTORY MODAL */}
-      {selectedCustomerForModal && (
-        <div className="fixed inset-0 bg-gray-900/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-2xl max-h-[85vh] overflow-y-auto space-y-4">
-
-            <div className="flex justify-between items-start border-b border-gray-100 pb-3">
-              <div>
-                <h3 className="font-bold text-base text-gray-900">{selectedCustomerForModal.name}</h3>
-                <p className="text-xs text-gray-500 font-mono">{selectedCustomerForModal.phone}</p>
-              </div>
-              <button onClick={() => setSelectedCustomerForModal(null)} className="text-gray-400 hover:text-gray-900 font-bold bg-gray-100 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
-            </div>
-
-            <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 grid grid-cols-2 gap-2 text-center text-xs">
-              <div>
-                <span className="text-[10px] text-gray-400 block">Total Orders</span>
-                <span className="font-bold text-gray-800">{selectedCustomerForModal.totalOrders}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-gray-400 block">Lifetime Spend</span>
-                <span className="font-bold text-emerald-600">{CURRENCY}{selectedCustomerForModal.totalSpent}</span>
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Order History</h4>
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                {(() => {
-                  // 1. Filter and Group the orders by Receipt ID
-                  const customerOrders = orders.filter(o => o.phone === selectedCustomerForModal.phone || o.customer === selectedCustomerForModal.name);
-                  const groups: Record<string, Order[]> = {};
-                  customerOrders.forEach(o => {
-                    if (!groups[o.id]) groups[o.id] = [];
-                    groups[o.id].push(o);
-                  });
-                  // 2. Sort newest to oldest
-                  const sortedGroups = Object.values(groups).sort((a, b) => new Date(b[0].date).getTime() - new Date(a[0].date).getTime());
-
-                  // 3. Render unified receipt cards
-                  return sortedGroups.map((group, idx) => {
-                    const first = group[0];
-                    const groupTotal = group.reduce((sum, item) => sum + item.total, 0);
-                    return (
-                      <div key={first.id} className="bg-white border border-gray-200 rounded-xl p-3 text-xs space-y-2 shadow-xs mb-2">
-                        <div className="flex justify-between items-start border-b border-gray-100 pb-2">
-                          <div>
-                            <span className="font-bold text-gray-800 block">Receipt: {first.id}</span>
-                            <span className="text-[10px] text-gray-400">{first.delivery_date || new Date(first.date).toLocaleDateString()}</span>
-                          </div>
-                          <span className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${first.status === 'Completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{first.status}</span>
-                        </div>
-
-                        <div className="space-y-1">
-                           {group.map((item, i) => (
-                             <div key={i} className="flex justify-between text-gray-600">
-                               <span>{item.quantity}x {item.product_name}</span>
-                               <span>{CURRENCY} {item.total.toFixed(2)}</span>
-                             </div>
-                           ))}
-                        </div>
-
-                        <div className="flex justify-between items-center pt-2 border-t border-gray-50">
-                          <span className="font-black text-gray-900">{CURRENCY} {groupTotal.toFixed(2)}</span>
-                          <button onClick={() => setReceiptToPrint(group)} className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-100 transition">🖨️ View Invoice</button>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-            </div>
-
-            <button onClick={() => setSelectedCustomerForModal(null)} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-3 rounded-xl text-xs shadow transition">
-              CLOSE
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 🖨️ THE PRINTABLE INVOICE POPUP */}
-      {receiptToPrint && (
-        <div className="fixed inset-0 bg-gray-900/60 z-[100] flex flex-col items-center justify-center p-4 print:p-0 print:bg-white">
-          <div className="bg-white border border-gray-200 p-6 rounded-xl shadow-lg max-w-sm w-full mx-auto font-sans print:shadow-none print:border-none print:p-0 print:max-w-full text-gray-900">
-
-            <div className="flex justify-end mb-2 print:hidden">
-              <button onClick={() => setReceiptToPrint(null)} className="text-gray-400 hover:text-gray-900 font-bold bg-gray-100 w-8 h-8 rounded-full flex items-center justify-center transition">✕</button>
-            </div>
-
-            <div className="text-center space-y-1">
-              <h2 className="font-black text-2xl uppercase tracking-widest text-black">{businessName}</h2>
-            </div>
-
-            <div className="border-t-2 border-dashed border-gray-300 my-4 print:border-black"></div>
-
-            <div className="text-center mb-4">
-              <h3 className="font-bold text-sm tracking-widest uppercase text-black">Commercial Invoice</h3>
-              <p className="text-[10px] font-mono text-gray-500 mt-0.5 print:text-black">Receipt No: {receiptToPrint[0].id}</p>
-              <p className="text-[10px] font-mono text-gray-500 mt-0.5 print:text-black">{new Date(receiptToPrint[0].date).toLocaleDateString('en-GB')} | {receiptToPrint[0].time}</p>
-            </div>
-
-            <div className="text-xs space-y-1 mb-4 text-black">
-              <div className="flex justify-between"><span className="font-medium">Customer:</span> <span className="font-bold">{receiptToPrint[0].customer}</span></div>
-              <div className="flex justify-between"><span className="font-medium">Phone:</span> <span className="font-bold">{receiptToPrint[0].phone || 'N/A'}</span></div>
-            </div>
-
-            <div className="border-t-2 border-dashed border-gray-300 my-3 print:border-black"></div>
-
-            <div className="mb-4">
-              <div className="flex justify-between text-[10px] font-bold text-gray-500 uppercase mb-2 print:text-black">
-                <span>Item & Qty</span>
-                <span>Total</span>
-              </div>
-              <div className="space-y-2 text-xs text-black">
-                {receiptToPrint.map((item, idx) => (
-                  <div key={idx} className="flex justify-between items-start">
-                    <p className="font-semibold">{item.product_name} <span className="text-gray-500 font-normal ml-1 print:text-black">× {item.quantity}</span></p>
-                    <p className="font-bold">{CURRENCY} {item.total.toFixed(2)}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="border-t-2 border-gray-800 my-3 print:border-black"></div>
-
-            <div className="flex justify-between items-center text-sm font-black mb-3 text-black">
-              <span>GRAND TOTAL:</span>
-              <span>{CURRENCY} {receiptToPrint.reduce((s, i) => s + i.total, 0).toFixed(2)}</span>
-            </div>
-
-            <div className="text-xs space-y-1.5 mb-4 text-gray-600 print:text-black">
-              <div className="flex justify-between">
-                <span>Paid / Advance:</span>
-                <span>{CURRENCY} {receiptToPrint.reduce((s, i) => s + i.advance_paid, 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between items-center text-sm font-black bg-gray-100 p-2 rounded-lg print:bg-transparent print:border-2 print:border-black print:p-1.5 mt-2">
-                <span className="text-black">DUE TO COLLECT:</span>
-                <span className="text-black">{CURRENCY} {receiptToPrint.reduce((s, i) => s + i.pending_payment, 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between mt-2 text-[10px] text-gray-500 print:text-black">
-                <span>Payment Method:</span>
-                <span className="font-bold">{receiptToPrint[0].payment_method || 'Cash'}</span>
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-4 print:hidden">
-              <button onClick={() => window.print()} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-3.5 rounded-xl text-xs shadow transition">🖨️ Print Receipt</button>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 };

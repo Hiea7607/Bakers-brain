@@ -79,7 +79,7 @@ interface BakeryContextType {
   createOrder: (parsed: ParsedOrder) => Promise<string>;
   markOrderCompleted: (orderId: string) => Promise<void>;
   logWaste: (shelfItemId: string, quantity: number) => Promise<void>;
-  exportOrdersCSV: () => void; exportDatabaseJSON: () => void;
+  exportOrdersCSV: () => void; exportMonthlyCSV: () => Promise<void>;
 }
 
 const BakeryContext = createContext<BakeryContextType | null>(null);
@@ -95,8 +95,8 @@ export const standardizeDateString = (dateStr: string) => {
   } else if (cleanStr === "tomorrow") {
     targetDate.setDate(today.getDate() + 1);
   } else {
-    // Handle formats like 6/10/2026
-    const parts = cleanStr.split('/');
+    // Detects both DD/MM/YYYY and DD-MM-YYYY perfectly
+    const parts = cleanStr.split(/[/-]/); 
     if (parts.length === 3) {
        const day = parseInt(parts[0], 10);
        const month = parseInt(parts[1], 10) - 1;
@@ -597,18 +597,32 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
      return {
        todaySales: parseFloat(todaySales.toFixed(2)), 
-       todayProfit: parseFloat((todayBaseProfit - todayLoss).toFixed(2)), // THE FIX
-       todayOrdersCount: todayOrders.length,
-       upcomingDeliveriesCount: orders.filter((o) => { const d = new Date(getEffectiveDate(o)); d.setHours(0, 0, 0, 0); return d > todayMidnight; }).length, 
-       deliveriesTodayCount: todayOrders.length, 
+       todayProfit: parseFloat((todayBaseProfit - todayLoss).toFixed(2)), 
+
+       // FIXED: Count unique Order IDs instead of raw database rows
+       todayOrdersCount: new Set(todayOrders.map(o => o.id)).size,
+       upcomingDeliveriesCount: new Set(orders.filter((o) => { 
+           const d = new Date(getEffectiveDate(o)); d.setHours(0, 0, 0, 0); return d > todayMidnight; 
+       }).map(o => o.id)).size, 
+       deliveriesTodayCount: new Set(todayOrders.map(o => o.id)).size, 
+
        pendingPaymentsAmount: parseFloat(pendingPaymentsAmount.toFixed(2)), 
-       pendingOrdersCount: pendingOrders.length,
+
+       // FIXED: Count unique Order IDs
+       pendingOrdersCount: new Set(pendingOrders.map(o => o.id)).size,
+
        monthlySales: parseFloat(monthlySales.toFixed(2)), 
-       monthlyProfit: parseFloat((monthlyBaseProfit - monthlyLoss).toFixed(2)), // THE FIX
-       monthlyOrdersCount: monthOrders.length,
+       monthlyProfit: parseFloat((monthlyBaseProfit - monthlyLoss).toFixed(2)), 
+
+       // FIXED: Count unique Order IDs
+       monthlyOrdersCount: new Set(monthOrders.map(o => o.id)).size,
+
        monthlyLoss: parseFloat(monthlyLoss.toFixed(2)), 
-       newCustomersThisMonth: monthOrders.filter((o) => o.is_new_customer === 1).length,
+
+       // FIXED: Count unique phone numbers to avoid double-counting new customers on multi-item orders
+       newCustomersThisMonth: new Set(monthOrders.filter((o) => o.is_new_customer === 1).map(o => o.phone)).size,
        newCustomersToday: new Set(orders.filter((o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1).map(o => o.phone)).size,
+
        lowStockCount: ingredients.filter((i) => i.stock <= i.minimum).length, 
        lowSellingCount, 
        bestSellingProduct: maxSold > 0 ? bestSellingProduct : "None yet",
@@ -634,27 +648,219 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  const exportOrdersCSV = () => {
-    if (orders.length === 0) return alert("No orders available to export today.");
-    const headers = ["Order ID", "Date", "Customer", "Phone", "Product", "Quantity", "Total (৳)", "Status", "Delivery Date"];
-    const rows = orders.map((o) => {
-      const escape = (text: string | number | undefined) => `"${String(text || "").replace(/"/g, '""')}"`;
-      return [escape(o.id), escape(new Date(o.date).toLocaleDateString()), escape(o.customer), escape(o.phone), escape(o.product_name), o.quantity, o.total, escape(o.status), escape(o.delivery_date)].join(",");
-    });
-    const csvContent = [headers.join(","), ...rows].join("\n");
-    const filename = `Daily_Orders_${new Date().toISOString().split('T')[0]}.csv`;
-    triggerDownload(csvContent, "text/csv;charset=utf-8;", filename);
+  const exportOrdersCSV = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return alert("You must be logged in to export data.");
+
+      // Set precise boundaries for "Today"
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const startIso = todayStart.toISOString(); // Keeps UTC shift just for Supabase searching
+
+      const todayEnd = new Date();
+      todayEnd.setHours(23, 59, 59, 999);
+      const endIso = todayEnd.toISOString();
+
+      // THE FIX: Grab the local date mathematically to prevent UTC shifting in the filename
+      const yyyy = todayStart.getFullYear();
+      const mm = String(todayStart.getMonth() + 1).padStart(2, '0');
+      const dd = String(todayStart.getDate()).padStart(2, '0');
+      const localToday = `${yyyy}-${mm}-${dd}`;
+
+      // 1. Fetch tables...
+      const [
+        { data: oData }, { data: pData }, { data: iData }, { data: purData },
+        { data: rData }, { data: sData }, { data: wData }, { data: dData }
+      ] = await Promise.all([
+        supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).gte("date", startIso).lte("date", endIso),
+        supabase.from("products").select("*").eq("user_id", user.id).eq("is_deleted", false),
+        supabase.from("ingredients").select("*").eq("user_id", user.id).eq("is_deleted", false),
+        supabase.from("purchases").select("*").eq("user_id", user.id).gte("date", startIso).lte("date", endIso).order("date", { ascending: false }),
+        supabase.from("recipes").select("*").eq("user_id", user.id),
+        supabase.from("shelf_stock").select("*").eq("user_id", user.id),
+        supabase.from("waste_logs").select("*").eq("user_id", user.id).gte("date", startIso).lte("date", endIso),
+        supabase.from("deductions").select("*").eq("user_id", user.id).gte("created_at", startIso).lte("created_at", endIso)
+      ]);
+
+      // 2. Create the master header and description using localToday
+      let csvContent = `Daily Business Backup for Disaster Recovery\n`;
+      csvContent += `Backup Date:,${localToday}\n`;
+      csvContent += `Business:,${shopSettings?.shop_name || "Rasel Food Ltd."}\n\n`;
+
+      // Helper function to cleanly build each table section
+      const generateTableCSV = (title: string, data: any[], headers: string[], keys: string[]) => {
+        if (!data || data.length === 0) return `--- ${title} ---\nNo data recorded today.\n\n`;
+        let section = `--- ${title} ---\n`;
+        section += headers.join(",") + "\n";
+        data.forEach(row => {
+          const rowData = keys.map(k => {
+            const val = row[k];
+            if (k.includes('date') || k === 'created_at') return `"${val ? new Date(val).toLocaleDateString() : ""}"`;
+            return `"${String(val || "").replace(/"/g, '""')}"`;
+          });
+          section += rowData.join(",") + "\n";
+        });
+        return section + "\n";
+      };
+
+      // 3. Append every table to the single Master CSV
+      csvContent += generateTableCSV("TODAY'S ORDERS", oData || [],
+        ["Order ID", "Date", "Customer", "Phone", "Product", "Qty", "Total (৳)", "Cost (৳)", "Profit (৳)", "Status", "Delivery Date"],
+        ["id", "date", "customer", "phone", "product_name", "quantity", "total", "cost", "profit", "status", "delivery_date"]
+      );
+
+      csvContent += generateTableCSV("TODAY'S PURCHASES", purData || [],
+        ["Date", "Ingredient Code", "Ingredient Name", "Qty Added", "Unit Price (৳)", "Total Cost (৳)", "Source"],
+        ["date", "code", "name", "quantity", "unit_price", "total_cost", "source"]
+      );
+
+      csvContent += generateTableCSV("TODAY'S WASTE & LOSS", wData || [],
+        ["Date", "Product Code", "Product Name", "Qty Wasted", "Total Financial Loss (৳)"],
+        ["date", "product_code", "product_name", "quantity", "total_loss"]
+      );
+
+      csvContent += generateTableCSV("TODAY'S MANUAL DEDUCTIONS", dData || [],
+        ["Date", "Product Name", "Ingredient Name", "Qty Deducted", "Reason"],
+        ["created_at", "product_name", "ingredient_name", "deducted_quantity", "type"]
+      );
+
+      csvContent += generateTableCSV("CURRENT RAW INGREDIENTS STOCK", iData || [],
+        ["Code", "Name", "Current Stock", "Unit", "Avg Unit Cost (৳)"],
+        ["code", "name", "stock", "unit", "unit_cost"]
+      );
+
+      csvContent += generateTableCSV("CURRENT SHELF STOCK (FINISHED GOODS)", sData || [],
+        ["Product Code", "Product Name", "Qty Available", "Batch Date", "Expiry Date"],
+        ["product_code", "product_name", "quantity", "batch_date", "expiry_date"]
+      );
+
+      csvContent += generateTableCSV("CURRENT PRODUCTS CATALOG", pData || [],
+        ["Code", "Name", "Selling Price (৳)", "Cost (৳)", "Status"],
+        ["code", "name", "price", "cost", "status"]
+      );
+
+      csvContent += generateTableCSV("CURRENT RECIPES / FORMULAS", rData || [],
+        ["Finished Product Code", "Raw Ingredient Code", "Quantity Required"],
+        ["product_code", "ingredient_code", "quantity"]
+      );
+
+      // 4. Trigger the download to the owner's device using localToday
+      const filename = `Daily_Report_${localToday}.csv`;
+      triggerDownload(csvContent, "text/csv;charset=utf-8;", filename);
+
+    } catch (error) {
+      console.error("Master Backup failed:", error);
+      alert("Failed to securely generate the database backup. Please check your connection.");
+    }
   };
 
-  const exportDatabaseJSON = () => {
-    const fullBackup = { exportDate: new Date().toISOString(), shopSettings, stats, products, ingredients, orders, purchases, shelfStock, wasteLogs, customers };
-    const jsonString = JSON.stringify(fullBackup, null, 2);
-    const filename = `Monthly_Backup_${new Date().toISOString().split('T')[0]}.json`;
-    triggerDownload(jsonString, "application/json", filename);
+  const exportMonthlyCSV = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return alert("You must be logged in to export data.");
+
+      // Set precise boundaries for "This Month" (From the 1st to Today)
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      monthStart.setHours(0, 0, 0, 0);
+      const startIso = monthStart.toISOString();
+
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      todayEnd.setHours(23, 59, 59, 999);
+      const endIso = todayEnd.toISOString();
+
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const monthYear = `${yyyy}-${mm}`; // e.g., 2026-10
+
+      // 1. Fetch tables. Transactions are strictly filtered for this month.
+      const [
+        { data: oData }, { data: pData }, { data: iData }, { data: purData },
+        { data: rData }, { data: sData }, { data: wData }, { data: dData }
+      ] = await Promise.all([
+        supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).gte("date", startIso).lte("date", endIso),
+        supabase.from("products").select("*").eq("user_id", user.id).eq("is_deleted", false),
+        supabase.from("ingredients").select("*").eq("user_id", user.id).eq("is_deleted", false),
+        supabase.from("purchases").select("*").eq("user_id", user.id).gte("date", startIso).lte("date", endIso).order("date", { ascending: false }),
+        supabase.from("recipes").select("*").eq("user_id", user.id),
+        supabase.from("shelf_stock").select("*").eq("user_id", user.id),
+        supabase.from("waste_logs").select("*").eq("user_id", user.id).gte("date", startIso).lte("date", endIso),
+        supabase.from("deductions").select("*").eq("user_id", user.id).gte("created_at", startIso).lte("created_at", endIso)
+      ]);
+
+      // 2. Create the master header
+      let csvContent = `Monthly Business Backup for Disaster Recovery\n`;
+      csvContent += `Billing Month:,${monthYear}\n`;
+      csvContent += `Business:,${shopSettings?.shop_name || "Rasel Food Ltd."}\n\n`;
+
+      const generateTableCSV = (title: string, data: any[], headers: string[], keys: string[]) => {
+        if (!data || data.length === 0) return `--- ${title} ---\nNo data recorded this month.\n\n`;
+        let section = `--- ${title} ---\n`;
+        section += headers.join(",") + "\n";
+        data.forEach(row => {
+          const rowData = keys.map(k => {
+            const val = row[k];
+            if (k.includes('date') || k === 'created_at') return `"${val ? new Date(val).toLocaleDateString() : ""}"`;
+            return `"${String(val || "").replace(/"/g, '""')}"`;
+          });
+          section += rowData.join(",") + "\n";
+        });
+        return section + "\n";
+      };
+
+      // 3. Append every table to the single Master CSV
+      csvContent += generateTableCSV("THIS MONTH'S ORDERS", oData || [],
+        ["Order ID", "Date", "Customer", "Phone", "Product", "Qty", "Total (৳)", "Cost (৳)", "Profit (৳)", "Status", "Delivery Date"],
+        ["id", "date", "customer", "phone", "product_name", "quantity", "total", "cost", "profit", "status", "delivery_date"]
+      );
+
+      csvContent += generateTableCSV("THIS MONTH'S PURCHASES", purData || [],
+        ["Date", "Ingredient Code", "Ingredient Name", "Qty Added", "Unit Price (৳)", "Total Cost (৳)", "Source"],
+        ["date", "code", "name", "quantity", "unit_price", "total_cost", "source"]
+      );
+
+      csvContent += generateTableCSV("THIS MONTH'S WASTE & LOSS", wData || [],
+        ["Date", "Product Code", "Product Name", "Qty Wasted", "Total Financial Loss (৳)"],
+        ["date", "product_code", "product_name", "quantity", "total_loss"]
+      );
+
+      csvContent += generateTableCSV("THIS MONTH'S MANUAL DEDUCTIONS", dData || [],
+        ["Date", "Product Name", "Ingredient Name", "Qty Deducted", "Reason"],
+        ["created_at", "product_name", "ingredient_name", "deducted_quantity", "type"]
+      );
+
+      csvContent += generateTableCSV("CURRENT RAW INGREDIENTS STOCK", iData || [],
+        ["Code", "Name", "Current Stock", "Unit", "Avg Unit Cost (৳)"],
+        ["code", "name", "stock", "unit", "unit_cost"]
+      );
+
+      csvContent += generateTableCSV("CURRENT SHELF STOCK (FINISHED GOODS)", sData || [],
+        ["Product Code", "Product Name", "Qty Available", "Batch Date", "Expiry Date"],
+        ["product_code", "product_name", "quantity", "batch_date", "expiry_date"]
+      );
+
+      csvContent += generateTableCSV("CURRENT PRODUCTS CATALOG", pData || [],
+        ["Code", "Name", "Selling Price (৳)", "Cost (৳)", "Status"],
+        ["code", "name", "price", "cost", "status"]
+      );
+
+      csvContent += generateTableCSV("CURRENT RECIPES / FORMULAS", rData || [],
+        ["Finished Product Code", "Raw Ingredient Code", "Quantity Required"],
+        ["product_code", "ingredient_code", "quantity"]
+      );
+
+      const filename = `Monthly_Report_${monthYear}.csv`;
+      triggerDownload(csvContent, "text/csv;charset=utf-8;", filename);
+
+    } catch (error) {
+      console.error("Monthly Backup failed:", error);
+      alert("Failed to securely generate the database backup. Please check your connection.");
+    }
   };
 
   return (
-    <BakeryContext.Provider value={{ products, ingredients, orders, purchases, customers, shelfStock, wasteLogs, shopSettings, stats, fetchData, updateShopSettings, addProduct, deleteProduct, deleteIngredientItem, deleteOrder, deductIngredientItem, savePurchase, attachRecipeItem, createOrder, markOrderCompleted, logWaste, exportOrdersCSV, exportDatabaseJSON }}>
+    <BakeryContext.Provider value={{ products, ingredients, orders, purchases, customers, shelfStock, wasteLogs, shopSettings, stats, fetchData, updateShopSettings, addProduct, deleteProduct, deleteIngredientItem, deleteOrder, deductIngredientItem, savePurchase, attachRecipeItem, createOrder, markOrderCompleted, logWaste, exportOrdersCSV, exportMonthlyCSV }}>
       {children}
     </BakeryContext.Provider>
   );

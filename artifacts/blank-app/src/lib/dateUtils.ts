@@ -1,21 +1,44 @@
-// artifacts/blank-app/src/lib/dateUtils.ts
-
-/**
- * Converts any valid date input into the universal "DD Mon YYYY" format.
- * Example: "2026-09-11" -> "11 Sep 2026"
- */
 export function formatToUniversalDate(dateInput: string | Date | null | undefined): string {
   if (!dateInput) return "";
 
-  const date = new Date(dateInput);
+  let year, month, day;
 
-  // Return empty string if the date is invalid
-  if (isNaN(date.getTime())) return "";
+  if (dateInput instanceof Date) {
+    if (isNaN(dateInput.getTime())) return "";
+    year = dateInput.getFullYear();
+    month = dateInput.getMonth();
+    day = dateInput.getDate();
+  } else {
+    const dateStr = String(dateInput).trim();
 
-  const day = String(date.getDate()).padStart(2, '0');
+    // 1. Check for strict Database Format (YYYY-MM-DD or YYYY/MM/DD)
+    if (/^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/.test(dateStr)) {
+      const parts = dateStr.split(/[/-]/);
+      year = parseInt(parts[0], 10);
+      month = parseInt(parts[1], 10) - 1;
+      day = parseInt(parts[2], 10);
+    } 
+    // 2. Check for Bangladesh Format (DD-MM-YYYY or DD/MM/YYYY)
+    else if (/^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(dateStr)) {
+      const parts = dateStr.split(/[/-]/);
+      day = parseInt(parts[0], 10);
+      month = parseInt(parts[1], 10) - 1;
+      year = parseInt(parts[2], 10);
+      if (year < 100) year += 2000;
+    } 
+    // 3. Fallback for standard text like "today"
+    else {
+      const fallback = new Date(dateStr);
+      if (isNaN(fallback.getTime())) return dateStr;
+      year = fallback.getFullYear();
+      month = fallback.getMonth();
+      day = fallback.getDate();
+    }
+  }
+
+  const paddedDay = String(day).padStart(2, '0');
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const month = monthNames[date.getMonth()];
-  const year = date.getFullYear();
+  const monthName = monthNames[month];
 
-  return `${day} ${month} ${year}`;
+  return `${paddedDay} ${monthName} ${year}`;
 }
