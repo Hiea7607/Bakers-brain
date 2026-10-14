@@ -256,6 +256,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
       `💰 Financials:\n` +
       `Total Sales: ৳ ${stats.todaySales || 0}\n` +
       `Net Profit: ৳ ${stats.todayProfit || 0}\n` +
+      `Wastage & Loss: ৳ ${stats.todayLoss || 0}\n` + 
       `Pending Dues: ৳ ${stats.pendingPaymentsAmount || 0}\n\n` +
       `📦 Operations:\n` +
       `Orders Completed: ${stats.todayOrdersCount || 0}\n` +
@@ -263,7 +264,8 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
       `Deliveries Due Tomorrow: ${stats.upcomingDeliveriesCount || 0}\n` +
       `New Customers: ${stats.newCustomersToday || 0}\n\n` +
       `⚠️ Kitchen Alerts:\n` +
-      `Low Stock Items: ${stats.lowStockCount || 0}`
+      `Low Stock Items: ${stats.lowStockCount || 0}\n` +
+      `Margin Warnings: ${issueProductsCount || 0} items below target` 
     );
     window.open(`mailto:${userEmail}?subject=${subject}&body=${body}`, "_blank");
   };

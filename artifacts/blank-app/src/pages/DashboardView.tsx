@@ -78,7 +78,7 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
         </button>
 
         <button
-          onClick={() => onNavigate("reports")}
+          onClick={() => onNavigate("customers")}
           className="bg-white p-3 rounded-xl shadow-xs border border-gray-100 flex items-center justify-between text-left hover:border-rose-200 transition"
         >
           <div>
@@ -109,7 +109,7 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
         </div>
 
         <div
-          onClick={() => onNavigate("reports")}
+          onClick={() => onNavigate("customers")}
           className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50 cursor-pointer hover:text-purple-600 transition"
         >
           <div className="flex items-center gap-2">
