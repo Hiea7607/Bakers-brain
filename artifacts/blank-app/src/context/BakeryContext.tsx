@@ -95,7 +95,6 @@ export const standardizeDateString = (dateStr: string) => {
   } else if (cleanStr === "tomorrow") {
     targetDate.setDate(today.getDate() + 1);
   } else {
-    // Detects both DD/MM/YYYY and DD-MM-YYYY perfectly
     const parts = cleanStr.split(/[/-]/); 
     if (parts.length === 3) {
        const day = parseInt(parts[0], 10);
@@ -108,17 +107,23 @@ export const standardizeDateString = (dateStr: string) => {
     }
   }
 
-  // If it's completely invalid, fallback to today
   if (isNaN(targetDate.getTime())) {
     targetDate = today;
   }
 
-  // Output strict Database Format (YYYY-MM-DD)
   const yyyy = targetDate.getFullYear();
   const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
   const dd = String(targetDate.getDate()).padStart(2, '0');
 
   return `${yyyy}-${mm}-${dd}`;
+};
+
+// Fast local session reader (avoids extra network roundtrip on every action)
+const getActiveUser = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.user) return session.user;
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
 };
 
 export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -132,39 +137,55 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const fetchData = useCallback(async () => {
     try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) return;
+      const user = await getActiveUser();
+      if (!user) return;
 
-      const [pRes, iRes, oRes, purRes] = await Promise.all([
+      // 🚀 WAVE 1 (PRIORITY): Fetch core dashboard & header data in 1 parallel request
+      const INITIAL_ORDER_LIMIT = 200;
+      const [pRes, iRes, oRes, setRes, rosterRes] = await Promise.all([
         supabase.from("products").select("*").eq("user_id", user.id).eq("is_deleted", false).order("name", { ascending: true }),
         supabase.from("ingredients").select("*").eq("user_id", user.id).eq("is_deleted", false).order("name", { ascending: true }),
-        supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }),
-        supabase.from("purchases").select("*").eq("user_id", user.id).order("date", { ascending: false })
+        supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }).limit(INITIAL_ORDER_LIMIT),
+        supabase.from("shop_settings").select("*").eq("user_id", user.id).limit(1),
+        supabase.from("client_roster").select("business_name").eq("user_id", user.id).limit(1)
       ]);
 
       if (pRes.data) setProducts(pRes.data as Product[]);
       if (iRes.data) setIngredients(iRes.data as IngredientItem[]);
       if (oRes.data) setOrders(oRes.data as Order[]);
-      if (purRes.data) setPurchases(purRes.data as Purchase[]);
 
-      // Fetch Shop Settings & official business name from client_roster table
-      const { data: setRes } = await supabase.from("shop_settings").select("*").eq("user_id", user.id).limit(1);
-      const { data: rosterRes } = await supabase.from("client_roster").select("business_name").eq("user_id", user.id).limit(1);
+      const officialBusinessName = rosterRes.data && rosterRes.data.length > 0 ? rosterRes.data[0].business_name : "Rasel Food Ltd.";
 
-      const officialBusinessName = rosterRes && rosterRes.length > 0 ? rosterRes[0].business_name : "Rasel Food Ltd.";
-
-      if (setRes && setRes.length > 0) {
-        setShopSettings({ ...setRes[0], shop_name: officialBusinessName } as ShopSettings);
+      if (setRes.data && setRes.data.length > 0) {
+        setShopSettings({ ...setRes.data[0], shop_name: officialBusinessName } as ShopSettings);
       } else {
         const defaultSettings = { user_id: user.id, currency_symbol: '৳', default_tax_rate: 0, target_margin: 20, shop_name: officialBusinessName, shop_address: '', shop_phone: '' };
-        const { data: newSettings } = await supabase.from("shop_settings").upsert([defaultSettings], { onConflict: 'user_id' }).select().limit(1);
-        if (newSettings && newSettings.length > 0) setShopSettings({ ...newSettings[0], shop_name: officialBusinessName } as ShopSettings);
+        supabase.from("shop_settings").upsert([defaultSettings], { onConflict: 'user_id' }).select().limit(1).then(({ data: newSettings }) => {
+          if (newSettings && newSettings.length > 0) setShopSettings({ ...newSettings[0], shop_name: officialBusinessName } as ShopSettings);
+        });
       }
 
-      const { data: sData } = await supabase.from("shelf_stock").select("*").eq("user_id", user.id).gt("quantity", 0).order("expiry_date", { ascending: true });
-      if (sData) setShelfStock(sData as ShelfItem[]);
-      const { data: wData } = await supabase.from("waste_logs").select("*").eq("user_id", user.id).order("date", { ascending: false });
-      if (wData) setWasteLogs(wData as WasteLog[]);
+      // 🌊 WAVE 2 (BACKGROUND LAZY DOWNLOAD): Fetch secondary tables & older history without blocking UI
+      Promise.all([
+        supabase.from("shelf_stock").select("*").eq("user_id", user.id).gt("quantity", 0).order("expiry_date", { ascending: true }),
+        supabase.from("waste_logs").select("*").eq("user_id", user.id).order("date", { ascending: false }),
+        supabase.from("purchases").select("*").eq("user_id", user.id).order("date", { ascending: false }),
+        // If user has more than 200 orders, progressively pull the remaining history
+        oRes.data && oRes.data.length === INITIAL_ORDER_LIMIT
+          ? supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }).range(INITIAL_ORDER_LIMIT, 2000)
+          : Promise.resolve({ data: null })
+      ]).then(([sRes, wRes, purRes, olderOrdersRes]) => {
+        if (sRes.data) setShelfStock(sRes.data as ShelfItem[]);
+        if (wRes.data) setWasteLogs(wRes.data as WasteLog[]);
+        if (purRes.data) setPurchases(purRes.data as Purchase[]);
+        if (olderOrdersRes.data && olderOrdersRes.data.length > 0) {
+          setOrders(prev => {
+            const existingIds = new Set(prev.map(o => `${o.id}-${o.product_code}`));
+            const uniqueOlder = (olderOrdersRes.data as Order[]).filter(o => !existingIds.has(`${o.id}-${o.product_code}`));
+            return [...prev, ...uniqueOlder];
+          });
+        }
+      });
 
     } catch (err) {
       console.error("Cloud fetch error:", err);
@@ -174,7 +195,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const updateShopSettings = async (updates: Partial<ShopSettings>) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
     const merged = { ...shopSettings, ...updates, user_id: user.id };
     await supabase.from("shop_settings").upsert(merged, { onConflict: 'user_id' });
@@ -182,7 +203,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const addProduct = async (product: any) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
 
     const newProduct = { ...product, cost: 0, status: "Active", user_id: user.id, is_deleted: false };
@@ -201,21 +222,21 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const deleteProduct = async (code: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
     const { error } = await supabase.from("products").update({ is_deleted: true }).eq("code", code).eq("user_id", user.id);
     if (!error) setProducts((prev) => prev.filter((p) => p.code !== code));
   };
 
   const deleteIngredientItem = async (code: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
     const { error } = await supabase.from("ingredients").update({ is_deleted: true }).eq("code", code).eq("user_id", user.id);
     if (!error) setIngredients((prev) => prev.filter((item) => item.code !== code));
   };
 
   const deleteOrder = async (id: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
 
     const ordersToCancel = orders.filter(o => o.id === id);
@@ -248,7 +269,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const deductIngredientItem = async (code: string, quantity: number, reason: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
 
     const currentItem = ingredients.find((i) => i.code === code);
@@ -274,7 +295,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     await supabase.from("deductions").insert([newDeduction]);
 
-    // 3. NEW: Calculate financial loss and log to waste_logs
+    // 3. Calculate financial loss and log to waste_logs
     const lossAmount = quantity * (currentItem.unit_cost || 0);
 
     if (lossAmount > 0) {
@@ -294,7 +315,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const savePurchase = async (purchase: any, minimum = 2) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
 
     let currentIngId = "";
@@ -343,14 +364,14 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const attachRecipeItem = async (productCode: string, ingredientCode: string, quantity: number) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
     await supabase.from("recipes").delete().eq("product_code", productCode).eq("ingredient_code", ingredientCode).eq("user_id", user.id);
     await supabase.from("recipes").insert([{ product_code: productCode, ingredient_code: ingredientCode, quantity, user_id: user.id }]);
   };
 
   const logWaste = async (shelfItemId: string, quantity: number) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
     const item = shelfStock.find(i => i.id === shelfItemId);
     if (!item) return;
@@ -364,7 +385,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const createOrder = async (parsed: ParsedOrder): Promise<string> => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) throw new Error("Unauthorized");
     const now = new Date();
     const newDeductions: any[] = [];
@@ -433,7 +454,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const uniqueHash = Math.floor(10 + Math.random() * 90);
     const orderId = `${firstLetter}-${dayOfMonth}#${nextSeq}-${uniqueHash}`;
 
-    // Only counts as a new customer if a phone number is provided AND it doesn't exist in past orders
     const isNew = (parsed.phone && !orders.some((o) => o.phone === parsed.phone)) ? 1 : 0;
 
     const actualOrderType = parsed.orderType || (parsed.isWalkIn ? "Walk-in" : "Online");
@@ -450,10 +470,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const actualUnitCost = matchedProduct?.cost || 0;
       const actualTotalCost = actualUnitCost * item.quantity;
 
-      const itemBaseTotal = item.quantity * item.unitPrice; // Pure product revenue
+      const itemBaseTotal = item.quantity * item.unitPrice;
       let rowTotal = itemBaseTotal;
 
-      // VAT & Delivery are added to the Grand Total for the customer to pay
       if (i === 0) rowTotal += (parsed.deliveryCharge || 0) + (parsed.vatAmount || 0);
 
       let rowAdvance = 0;
@@ -462,8 +481,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       else if (remainingAdvance > 0) { rowAdvance = remainingAdvance; remainingAdvance = 0; }
 
       const rowPending = actualOrderType === "Walk-in" ? 0 : Math.max(0, rowTotal - rowAdvance);
-
-      // THE FIX: Profit ignores VAT and Delivery. It is strictly Product Revenue - Product Cost.
       const rowProfit = itemBaseTotal - actualTotalCost;
 
       newOrders.push({
@@ -472,11 +489,11 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         date: now.toISOString(), time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         customer: parsed.customer, phone: parsed.phone, product_code: item.productCode, product_name: item.productName,
         quantity: item.quantity, unit_price: item.unitPrice, 
-        total: parseFloat(rowTotal.toFixed(2)), // Customer pays this
+        total: parseFloat(rowTotal.toFixed(2)),
         advance_paid: parseFloat(rowAdvance.toFixed(2)),
         pending_payment: parseFloat(rowPending.toFixed(2)), 
         cost: parseFloat(actualTotalCost.toFixed(2)), 
-        profit: parseFloat(rowProfit.toFixed(2)), // Pure profit is saved to the database
+        profit: parseFloat(rowProfit.toFixed(2)),
         location: parsed.location, delivery_date: finalDeliveryDate, payment_method: parsed.paymentMethod, 
         status, 
         order_type: actualOrderType,
@@ -510,7 +527,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const markOrderCompleted = async (orderId: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getActiveUser();
     if (!user) return;
     setOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, status: "Completed" as const, advance_paid: o.total, pending_payment: 0 } : o));
     await supabase.from("orders").update({ status: "Completed", advance_paid: orders.find(o => o.id === orderId)?.total, pending_payment: 0 }).eq("id", orderId).eq("user_id", user.id);
@@ -556,79 +573,67 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const todayOrders = orders.filter((o) => getEffectiveDate(o).toDateString() === todayStr);
     const monthOrders = orders.filter((o) => { const d = getEffectiveDate(o); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; });
 
-     const completedToday = todayOrders.filter((o) => o.status === "Completed");
-     const todaySales = completedToday.reduce((sum, o) => sum + (o.total || 0), 0);
-     const todayBaseProfit = completedToday.reduce((sum, o) => sum + (o.profit || 0), 0); // THE FIX: Sum pure profits
+    const completedToday = todayOrders.filter((o) => o.status === "Completed");
+    const todaySales = completedToday.reduce((sum, o) => sum + (o.total || 0), 0);
+    const todayBaseProfit = completedToday.reduce((sum, o) => sum + (o.profit || 0), 0);
 
-     const completedMonth = monthOrders.filter((o) => o.status === "Completed");
-     const monthlySales = completedMonth.reduce((sum, o) => sum + (o.total || 0), 0);
-     const monthlyBaseProfit = completedMonth.reduce((sum, o) => sum + (o.profit || 0), 0); // THE FIX: Sum pure profits
+    const completedMonth = monthOrders.filter((o) => o.status === "Completed");
+    const monthlySales = completedMonth.reduce((sum, o) => sum + (o.total || 0), 0);
+    const monthlyBaseProfit = completedMonth.reduce((sum, o) => sum + (o.profit || 0), 0);
 
-     const todayLoss = wasteLogs.filter(w => new Date(w.date).toDateString() === todayStr).reduce((sum, w) => sum + (w.total_loss || 0), 0);
-     const monthlyLoss = wasteLogs.filter(w => { const d = new Date(w.date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; }).reduce((sum, w) => sum + (w.total_loss || 0), 0);
+    const todayLoss = wasteLogs.filter(w => new Date(w.date).toDateString() === todayStr).reduce((sum, w) => sum + (w.total_loss || 0), 0);
+    const monthlyLoss = wasteLogs.filter(w => { const d = new Date(w.date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; }).reduce((sum, w) => sum + (w.total_loss || 0), 0);
 
-     const pendingOrders = orders.filter((o) => o.status === "Pending");
-     const activePendingOrders = pendingOrders.filter((o) => { const d = new Date(getEffectiveDate(o)); d.setHours(0, 0, 0, 0); return d <= todayMidnight; });
-     const pendingPaymentsAmount = activePendingOrders.reduce((sum, o) => sum + (o.pending_payment || 0), 0);
+    const pendingOrders = orders.filter((o) => o.status === "Pending");
+    const activePendingOrders = pendingOrders.filter((o) => { const d = new Date(getEffectiveDate(o)); d.setHours(0, 0, 0, 0); return d <= todayMidnight; });
+    const pendingPaymentsAmount = activePendingOrders.reduce((sum, o) => sum + (o.pending_payment || 0), 0);
 
-     const productSoldMap: Record<string, number> = {};
-     orders.forEach((o) => { productSoldMap[o.product_name] = (productSoldMap[o.product_name] || 0) + o.quantity; });
+    const productSoldMap: Record<string, number> = {};
+    orders.forEach((o) => { productSoldMap[o.product_name] = (productSoldMap[o.product_name] || 0) + o.quantity; });
 
-     let bestSellingProduct = "N/A"; 
-     let maxSold = 0; 
-     let lowSellingCount = 0;
-     let highestMargin = -Infinity;
-     let highestMarginProduct = "N/A";
+    let bestSellingProduct = "N/A"; 
+    let maxSold = 0; 
+    let lowSellingCount = 0;
+    let highestMargin = -Infinity;
+    let highestMarginProduct = "N/A";
 
-     products.forEach((p) => { 
-       const sold = productSoldMap[p.name] || 0; 
-       if (sold > maxSold) { maxSold = sold; bestSellingProduct = `${p.name} (${sold} sold)`; } 
+    products.forEach((p) => { 
+      const sold = productSoldMap[p.name] || 0; 
+      if (sold > maxSold) { maxSold = sold; bestSellingProduct = `${p.name} (${sold} sold)`; } 
 
-       if (sold > 0 && sold <= 3) lowSellingCount++; 
+      if (sold > 0 && sold <= 3) lowSellingCount++; 
 
-       if (p.price > 0) {
-          const margin = ((p.price - (p.cost || 0)) / p.price) * 100;
-          if (margin > highestMargin) {
-              highestMargin = margin;
-              highestMarginProduct = `${p.name} (${Math.round(margin)}%)`;
-          }
-       }
-     });
+      if (p.price > 0) {
+         const margin = ((p.price - (p.cost || 0)) / p.price) * 100;
+         if (margin > highestMargin) {
+             highestMargin = margin;
+             highestMarginProduct = `${p.name} (${Math.round(margin)}%)`;
+         }
+      }
+    });
 
-     return {
-       todaySales: parseFloat(todaySales.toFixed(2)), 
-       todayProfit: parseFloat((todayBaseProfit - todayLoss).toFixed(2)), 
-
-       // FIXED: Count unique Order IDs instead of raw database rows
-       todayOrdersCount: new Set(todayOrders.map(o => o.id)).size,
-       upcomingDeliveriesCount: new Set(orders.filter((o) => { 
-           const d = new Date(getEffectiveDate(o)); d.setHours(0, 0, 0, 0); return d > todayMidnight; 
-       }).map(o => o.id)).size, 
-       deliveriesTodayCount: new Set(todayOrders.map(o => o.id)).size, 
-
-       pendingPaymentsAmount: parseFloat(pendingPaymentsAmount.toFixed(2)), 
-
-       // FIXED: Count unique Order IDs
-       pendingOrdersCount: new Set(pendingOrders.map(o => o.id)).size,
-
-       monthlySales: parseFloat(monthlySales.toFixed(2)), 
-       monthlyProfit: parseFloat((monthlyBaseProfit - monthlyLoss).toFixed(2)), 
-
-       // FIXED: Count unique Order IDs
-       monthlyOrdersCount: new Set(monthOrders.map(o => o.id)).size,
-
-       monthlyLoss: parseFloat(monthlyLoss.toFixed(2)), 
-
-       // FIXED: Count unique phone numbers to avoid double-counting new customers on multi-item orders
-       newCustomersThisMonth: new Set(monthOrders.filter((o) => o.is_new_customer === 1).map(o => o.phone)).size,
-       newCustomersToday: new Set(orders.filter((o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1).map(o => o.phone)).size,
-
-       lowStockCount: ingredients.filter((i) => i.stock <= i.minimum).length, 
-       lowSellingCount, 
-       bestSellingProduct: maxSold > 0 ? bestSellingProduct : "None yet",
-       mostConsumedIngredient: ingredients[0]?.name ? `${ingredients[0].name}` : "N/A", 
-       highestProfitProduct: highestMarginProduct !== "N/A" ? highestMarginProduct : "N/A"
-     };
+    return {
+      todaySales: parseFloat(todaySales.toFixed(2)), 
+      todayProfit: parseFloat((todayBaseProfit - todayLoss).toFixed(2)), 
+      todayOrdersCount: new Set(todayOrders.map(o => o.id)).size,
+      upcomingDeliveriesCount: new Set(orders.filter((o) => { 
+          const d = new Date(getEffectiveDate(o)); d.setHours(0, 0, 0, 0); return d > todayMidnight; 
+      }).map(o => o.id)).size, 
+      deliveriesTodayCount: new Set(todayOrders.map(o => o.id)).size, 
+      pendingPaymentsAmount: parseFloat(pendingPaymentsAmount.toFixed(2)), 
+      pendingOrdersCount: new Set(pendingOrders.map(o => o.id)).size,
+      monthlySales: parseFloat(monthlySales.toFixed(2)), 
+      monthlyProfit: parseFloat((monthlyBaseProfit - monthlyLoss).toFixed(2)), 
+      monthlyOrdersCount: new Set(monthOrders.map(o => o.id)).size,
+      monthlyLoss: parseFloat(monthlyLoss.toFixed(2)), 
+      newCustomersThisMonth: new Set(monthOrders.filter((o) => o.is_new_customer === 1).map(o => o.phone)).size,
+      newCustomersToday: new Set(orders.filter((o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1).map(o => o.phone)).size,
+      lowStockCount: ingredients.filter((i) => i.stock <= i.minimum).length, 
+      lowSellingCount, 
+      bestSellingProduct: maxSold > 0 ? bestSellingProduct : "None yet",
+      mostConsumedIngredient: ingredients[0]?.name ? `${ingredients[0].name}` : "N/A", 
+      highestProfitProduct: highestMarginProduct !== "N/A" ? highestMarginProduct : "N/A"
+    };
   }, [orders, ingredients, products, wasteLogs]);
 
   const triggerDownload = (content: string, mimeType: string, filename: string) => {
@@ -650,25 +655,22 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const exportOrdersCSV = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getActiveUser();
       if (!user) return alert("You must be logged in to export data.");
 
-      // Set precise boundaries for "Today"
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
-      const startIso = todayStart.toISOString(); // Keeps UTC shift just for Supabase searching
+      const startIso = todayStart.toISOString();
 
       const todayEnd = new Date();
       todayEnd.setHours(23, 59, 59, 999);
       const endIso = todayEnd.toISOString();
 
-      // THE FIX: Grab the local date mathematically to prevent UTC shifting in the filename
       const yyyy = todayStart.getFullYear();
       const mm = String(todayStart.getMonth() + 1).padStart(2, '0');
       const dd = String(todayStart.getDate()).padStart(2, '0');
       const localToday = `${yyyy}-${mm}-${dd}`;
 
-      // 1. Fetch tables...
       const [
         { data: oData }, { data: pData }, { data: iData }, { data: purData },
         { data: rData }, { data: sData }, { data: wData }, { data: dData }
@@ -683,12 +685,10 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         supabase.from("deductions").select("*").eq("user_id", user.id).gte("created_at", startIso).lte("created_at", endIso)
       ]);
 
-      // 2. Create the master header and description using localToday
       let csvContent = `Daily Business Backup for Disaster Recovery\n`;
       csvContent += `Backup Date:,${localToday}\n`;
       csvContent += `Business:,${shopSettings?.shop_name || "Rasel Food Ltd."}\n\n`;
 
-      // Helper function to cleanly build each table section
       const generateTableCSV = (title: string, data: any[], headers: string[], keys: string[]) => {
         if (!data || data.length === 0) return `--- ${title} ---\nNo data recorded today.\n\n`;
         let section = `--- ${title} ---\n`;
@@ -704,7 +704,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return section + "\n";
       };
 
-      // 3. Append every table to the single Master CSV
       csvContent += generateTableCSV("TODAY'S ORDERS", oData || [],
         ["Order ID", "Date", "Customer", "Phone", "Product", "Qty", "Total (৳)", "Cost (৳)", "Profit (৳)", "Status", "Delivery Date"],
         ["id", "date", "customer", "phone", "product_name", "quantity", "total", "cost", "profit", "status", "delivery_date"]
@@ -745,7 +744,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ["product_code", "ingredient_code", "quantity"]
       );
 
-      // 4. Trigger the download to the owner's device using localToday
       const filename = `Daily_Report_${localToday}.csv`;
       triggerDownload(csvContent, "text/csv;charset=utf-8;", filename);
 
@@ -757,10 +755,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const exportMonthlyCSV = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getActiveUser();
       if (!user) return alert("You must be logged in to export data.");
 
-      // Set precise boundaries for "This Month" (From the 1st to Today)
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       monthStart.setHours(0, 0, 0, 0);
@@ -772,9 +769,8 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       const yyyy = now.getFullYear();
       const mm = String(now.getMonth() + 1).padStart(2, '0');
-      const monthYear = `${yyyy}-${mm}`; // e.g., 2026-10
+      const monthYear = `${yyyy}-${mm}`;
 
-      // 1. Fetch tables. Transactions are strictly filtered for this month.
       const [
         { data: oData }, { data: pData }, { data: iData }, { data: purData },
         { data: rData }, { data: sData }, { data: wData }, { data: dData }
@@ -789,7 +785,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         supabase.from("deductions").select("*").eq("user_id", user.id).gte("created_at", startIso).lte("created_at", endIso)
       ]);
 
-      // 2. Create the master header
       let csvContent = `Monthly Business Backup for Disaster Recovery\n`;
       csvContent += `Billing Month:,${monthYear}\n`;
       csvContent += `Business:,${shopSettings?.shop_name || "Rasel Food Ltd."}\n\n`;
@@ -809,7 +804,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return section + "\n";
       };
 
-      // 3. Append every table to the single Master CSV
       csvContent += generateTableCSV("THIS MONTH'S ORDERS", oData || [],
         ["Order ID", "Date", "Customer", "Phone", "Product", "Qty", "Total (৳)", "Cost (৳)", "Profit (৳)", "Status", "Delivery Date"],
         ["id", "date", "customer", "phone", "product_name", "quantity", "total", "cost", "profit", "status", "delivery_date"]

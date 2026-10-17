@@ -1,21 +1,128 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BakeryProvider, useBakery } from "./context/BakeryContext";
-import { DashboardView } from "./pages/DashboardView";
-import { QuickOrderView } from "./pages/QuickOrderView";
-import { OrdersView } from "./pages/OrdersView";
-import { ProductsView } from "./pages/ProductsView";
-import { RecipeBuilderView } from "./pages/RecipeBuilderView";
-import { InventoryView } from "./pages/InventoryView";
-import { ReportsView } from "./pages/ReportsView";
-import { AdminPortalView } from "./AdminPortalView";
-import { ClientLockoutView } from "./ClientLockoutView";
 import { formatToUniversalDate } from "./lib/dateUtils";
 import { supabase } from "./lib/supabaseClient";
-import { InvoicesView } from './pages/InvoicesView';
-import { CustomersView } from './pages/CustomersView';
 
-const queryClient = new QueryClient();
+// --- PROGRESSIVE (LAZY) PAGE DOWNLOADS ---
+// Each screen is only downloaded when the user actually opens it
+const DashboardView = lazy(() => import("./pages/DashboardView").then(m => ({ default: m.DashboardView })));
+const QuickOrderView = lazy(() => import("./pages/QuickOrderView").then(m => ({ default: m.QuickOrderView })));
+const OrdersView = lazy(() => import("./pages/OrdersView").then(m => ({ default: m.OrdersView })));
+const ProductsView = lazy(() => import("./pages/ProductsView").then(m => ({ default: m.ProductsView })));
+const RecipeBuilderView = lazy(() => import("./pages/RecipeBuilderView").then(m => ({ default: m.RecipeBuilderView })));
+const InventoryView = lazy(() => import("./pages/InventoryView").then(m => ({ default: m.InventoryView })));
+const ReportsView = lazy(() => import("./pages/ReportsView").then(m => ({ default: m.ReportsView })));
+const InvoicesView = lazy(() => import("./pages/InvoicesView").then(m => ({ default: m.InvoicesView })));
+const CustomersView = lazy(() => import("./pages/CustomersView").then(m => ({ default: m.CustomersView })));
+const AdminPortalView = lazy(() => import("./AdminPortalView").then(m => ({ default: m.AdminPortalView })));
+const ClientLockoutView = lazy(() => import("./ClientLockoutView").then(m => ({ default: m.ClientLockoutView })));
+
+// --- INLINE TIME TRAVEL TOOL ---
+const STORAGE_KEY = "bb_time_travel_offset";
+const OriginalDate = window.Date;
+const getOffset = () => Number(localStorage.getItem(STORAGE_KEY) || 0);
+
+if (!(window as any).__timeTravelEnabled) {
+  (window as any).__timeTravelEnabled = true;
+  class MockDate extends OriginalDate {
+    constructor(...args: any[]) {
+      if (args.length === 0) {
+        super(OriginalDate.now() + getOffset());
+      } else {
+        // @ts-ignore
+        super(...args);
+      }
+    }
+    static now() {
+      return OriginalDate.now() + getOffset();
+    }
+  }
+  window.Date = MockDate as DateConstructor;
+}
+
+function TimeTravelBar() {
+  const [offset, setOffset] = React.useState<number>(getOffset());
+  const [isMinimized, setIsMinimized] = React.useState(false);
+
+  const applyNewOffset = (newOffset: number) => {
+    localStorage.setItem(STORAGE_KEY, String(newOffset));
+    window.location.reload();
+  };
+
+  const shiftDays = (days: number) => {
+    const dayMs = days * 24 * 60 * 60 * 1000;
+    applyNewOffset(offset + dayMs);
+  };
+
+  const simulatedNow = new Date();
+  const yyyy = simulatedNow.getFullYear();
+  const mm = String(simulatedNow.getMonth() + 1).padStart(2, "0");
+  const dd = String(simulatedNow.getDate()).padStart(2, "0");
+  const currentSimDateStr = `${yyyy}-${mm}-${dd}`;
+  const isTimeTraveling = offset !== 0;
+
+  if (isMinimized) {
+    return (
+      <button
+        onClick={() => setIsMinimized(false)}
+        className="fixed bottom-16 right-3 z-50 px-3 py-1.5 rounded-full text-xs font-extrabold shadow-lg border bg-gray-900 text-white border-gray-700"
+      >
+        ⏱️ {currentSimDateStr}
+      </button>
+    );
+  }
+
+  return (
+    <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 w-[95%] max-w-md bg-gray-900/95 text-white p-3 rounded-2xl shadow-2xl border border-gray-700 text-xs">
+      <div className="flex items-center justify-between mb-2">
+        <span className="font-extrabold text-amber-400">
+          App Clock: {simulatedNow.toDateString()} {isTimeTraveling && "(FAKE)"}
+        </span>
+        <button onClick={() => setIsMinimized(true)} className="text-gray-400">Minimize</button>
+      </div>
+      <div className="flex items-center gap-1.5 justify-between">
+        <button onClick={() => shiftDays(-1)} className="bg-gray-800 px-2.5 py-1.5 rounded font-bold">-1d</button>
+        <button onClick={() => shiftDays(1)} className="bg-gray-800 px-2.5 py-1.5 rounded font-bold">+1d</button>
+        <button onClick={() => shiftDays(7)} className="bg-gray-800 px-2.5 py-1.5 rounded font-bold">+7d</button>
+        <input
+          type="date"
+          value={currentSimDateStr}
+          onChange={(e) => {
+            if (!e.target.value) return;
+            const picked = new OriginalDate(e.target.value + "T12:00:00");
+            applyNewOffset(picked.getTime() - new OriginalDate().getTime());
+          }}
+          className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white"
+        />
+        {isTimeTraveling && (
+          <button onClick={() => { localStorage.removeItem(STORAGE_KEY); window.location.reload(); }} className="bg-red-600 px-2 py-1.5 rounded font-bold">Reset</button>
+        )}
+      </div>
+    </div>
+  );
+}
+// --- END TIME TRAVEL TOOL ---
+
+// Lightweight loading UI shown for a split-second when downloading a tab for the first time
+function PageLoader() {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+      <div className="w-7 h-7 border-3 border-rose-600 border-t-transparent rounded-full animate-spin mb-3" />
+      <span className="text-xs font-bold tracking-wide">Loading screen...</span>
+    </div>
+  );
+}
+
+// Configured QueryClient to cache downloaded data for 5 minutes
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem("bb_auth") === "true");
@@ -39,39 +146,42 @@ export default function App() {
     // 3. Update the auth state
     setIsAuthenticated(false);
 
-    // 4. THIS IS THE MAGIC LINE: Force the browser to refresh, wiping React's memory clean!
+    // 4. Force the browser to refresh, wiping React's memory clean!
     window.location.reload(); 
   };
 
   return (
-      <QueryClientProvider client={queryClient}>
-        {!isAuthenticated ? (
-          <LandingGateway onLogin={handleLogin} />
-        ) : lockoutReason ? (
+    <QueryClientProvider client={queryClient}>
+      {!isAuthenticated ? (
+        <LandingGateway onLogin={handleLogin} />
+      ) : lockoutReason ? (
+        <Suspense fallback={<PageLoader />}>
           <ClientLockoutView 
             reason={lockoutReason} 
             businessName={businessName} 
             onLogout={handleLogout} 
           />
-        ) : userRole === 'admin' ? (
+        </Suspense>
+      ) : userRole === 'admin' ? (
+        <Suspense fallback={<PageLoader />}>
           <AdminPortalView onLogout={handleLogout} />
-        ) : (
-          /* ✅ BAKERY PROVIDER IS MOVED HERE: Now it only fetches AFTER you log in! */
-          <BakeryProvider>
-            <BakersBrainApp userRole={userRole} onLogout={handleLogout} />
-          </BakeryProvider>
-        )}
-      </QueryClientProvider>
-    );
-  }
-
+        </Suspense>
+      ) : (
+        /* ✅ BAKERY PROVIDER IS MOVED HERE: Now it only fetches AFTER you log in! */
+        <BakeryProvider>
+          <BakersBrainApp userRole={userRole} onLogout={handleLogout} />
+        </BakeryProvider>
+      )}
+    </QueryClientProvider>
+  );
+}
 
 // Secure Landing / Login Gateway
 function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
   const [activeTab, setActiveTab] = useState("business");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false); // Added state for password visibility
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [lastAdminSession, setLastAdminSession] = useState<{name: string, date: string} | null>(null);
@@ -197,14 +307,13 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
             <div>
               <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Password</label>
               <input
-                type={showPassword ? "text" : "password"} // Dynamic type based on state
+                type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter password..."
                 className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono"
                 required
               />
-              {/* Added Show Password Checkbox */}
               <div className="flex items-center mt-2">
                 <input
                   type="checkbox"
@@ -270,7 +379,6 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
     window.open(`mailto:${userEmail}?subject=${subject}&body=${body}`, "_blank");
   };
 
-
   useEffect(() => {
     localStorage.setItem("bb_current_page", currentPage);
   }, [currentPage]);
@@ -295,7 +403,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
             </button>
           </div>
 
-          {/* Right Side: Full Badges & Account Info (Now Fits Perfectly!) */}
+          {/* Right Side: Full Badges & Account Info */}
           <div className="flex items-center gap-2">
 
             {/* Badges with full text */}
@@ -360,7 +468,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                   { id: "orders", label: "Orders Manager", icon: "📦" },
                   { id: "products", label: "Products Catalog", icon: "🍽️" },
                   { id: "inventory", label: "Raw Ingredients", icon: "🥣" },
-                  { id: "customers", label: "Customers Directory", icon: "👥" }, // <-- ADDED CRM HERE, REMOVED REPORTS
+                  { id: "customers", label: "Customers Directory", icon: "👥" },
                 ].map((item) => (
                   <button
                     key={item.id}
@@ -425,24 +533,27 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
         </div>
       )}
 
-      {/* Main Content with professional top spacing */}
+      {/* Main Content wrapped in Suspense for progressive tab loading */}
       <main className="flex-1 p-4 pt-5 overflow-y-auto">
-        {currentPage === "dashboard" && <DashboardView onNavigate={setCurrentPage} />}
-        {currentPage === "neworder" && <QuickOrderView onOrderSaved={() => setCurrentPage("orders")} />}
-        {currentPage === "invoices" && <InvoicesView />} 
-        {currentPage === "orders" && <OrdersView onNavigate={setCurrentPage} />}
-        {currentPage === "products" && <ProductsView />}
-        {currentPage === "customers" && <CustomersView />} {/* <-- ADDED ROUTE HERE */}
-        {currentPage === "inventory" && <InventoryView />}
-
-        {currentPage === "reports" && <ReportsView onNavigate={setCurrentPage} />}
-        {currentPage.startsWith("recipe-") && (
-          <RecipeBuilderView
-            productCode={currentPage.replace("recipe-", "")}
-            onBack={() => setCurrentPage("products")}
-          />
-        )}
+        <Suspense fallback={<PageLoader />}>
+          {currentPage === "dashboard" && <DashboardView onNavigate={setCurrentPage} />}
+          {currentPage === "neworder" && <QuickOrderView onOrderSaved={() => setCurrentPage("orders")} />}
+          {currentPage === "invoices" && <InvoicesView />} 
+          {currentPage === "orders" && <OrdersView onNavigate={setCurrentPage} />}
+          {currentPage === "products" && <ProductsView />}
+          {currentPage === "customers" && <CustomersView />}
+          {currentPage === "inventory" && <InventoryView />}
+          {currentPage === "reports" && <ReportsView onNavigate={setCurrentPage} />}
+          {currentPage.startsWith("recipe-") && (
+            <RecipeBuilderView
+              productCode={currentPage.replace("recipe-", "")}
+              onBack={() => setCurrentPage("products")}
+            />
+          )}
+        </Suspense>
       </main>
+
+      <TimeTravelBar />
 
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-gray-200 px-4 py-2 flex justify-between items-center z-40 shadow-lg">
         <button
