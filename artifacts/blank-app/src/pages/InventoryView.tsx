@@ -4,7 +4,17 @@ import { useBakery, IngredientItem, Purchase } from "../context/BakeryContext";
 import { supabase } from "../lib/supabaseClient";
 
 export const InventoryView: React.FC = () => {
-  const { ingredients, purchases, savePurchase, deleteIngredientItem, deductIngredientItem, fetchData } = useBakery();
+  const {
+    ingredients,
+    allIngredients,
+    purchases,
+    savePurchase,
+    deletePurchase,
+    deleteIngredientItem,
+    deductIngredientItem,
+    getNextIngredientCode,
+    fetchData,
+  } = useBakery();
 
   // Search & Modal State
   const [searchQuery, setSearchQuery] = useState("");
@@ -51,7 +61,8 @@ export const InventoryView: React.FC = () => {
       setMinimum(String(existingItem.minimum));
 
       const itemPurchases = purchases.filter((p) => p.code === existingItem.code);
-      const lastPurchase = itemPurchases[itemPurchases.length - 1]; 
+      // FIXED: purchases are sorted newest-first, so index 0 is the latest purchase
+      const lastPurchase = itemPurchases[0];
 
       if (lastPurchase) {
         setUnitPrice(String(lastPurchase.unit_price || existingItem.unit_cost || ""));
@@ -62,18 +73,10 @@ export const InventoryView: React.FC = () => {
         setSource("");
         setNotes("");
       }
-      setQuantity(""); 
+      setQuantity("");
     } else {
-      // BUG FIX: Generate a truly unique ID by finding the highest existing ING number
-      let highestNum = 0;
-      ingredients.forEach(i => {
-        if (i.code.startsWith("ING")) {
-          const num = parseInt(i.code.replace("ING", ""), 10);
-          if (!isNaN(num) && num > highestNum) highestNum = num;
-        }
-      });
-
-      const autoCode = `ING${String(highestNum + 1).padStart(2, "0")}`;
+      // Checks all active + archived ingredients & purchase records so no ING code is ever reused
+      const autoCode = getNextIngredientCode();
       setCode(autoCode);
       setName("");
       setUnit("kg");
@@ -85,6 +88,36 @@ export const InventoryView: React.FC = () => {
     }
     setShowAddModal(true);
   };
+
+  // Auto-reconnects original ING code if the owner types the name of a previously archived/existing ingredient
+  const handleNameChange = (typedName: string) => {
+    setName(typedName);
+    if (!isEditing) {
+      const match = allIngredients.find(
+        (i) => i.name.trim().toLowerCase() === typedName.trim().toLowerCase()
+      );
+      if (match) {
+        setCode(match.code);
+        setUnit(match.unit || "kg");
+        setMinimum(String(match.minimum ?? 2));
+      } else {
+        // If current code belongs to another existing/archived item, reset to fresh next code
+        const codeTakenByOther = allIngredients.some((i) => i.code === code);
+        if (codeTakenByOther) {
+          setCode(getNextIngredientCode());
+        }
+      }
+    }
+  };
+
+  const matchedArchivedItem = !isEditing
+    ? allIngredients.find(
+        (i) =>
+          i.is_deleted &&
+          (i.code === code.toUpperCase().trim() ||
+            (name.trim() !== "" && i.name.trim().toLowerCase() === name.trim().toLowerCase()))
+      )
+    : undefined;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -124,7 +157,6 @@ export const InventoryView: React.FC = () => {
       return;
     }
 
-    // ADDED: await the save function
     await savePurchase(
       {
         code: formattedCode,
@@ -138,9 +170,7 @@ export const InventoryView: React.FC = () => {
       parseFloat(minimum) || 1
     );
 
-    // ADDED: Force the app to pull the newest data from Supabase
-    await fetchData(); 
-
+    await fetchData();
     setShowAddModal(false);
   };
 
@@ -148,7 +178,6 @@ export const InventoryView: React.FC = () => {
     e.preventDefault();
     if (!showDeductModal || !deductQty) return;
 
-    // FIXED: Now properly using deductIngredientItem
     await deductIngredientItem(showDeductModal.code, parseFloat(deductQty), deductReason);
     setShowDeductModal(null);
     setDeductQty("");
@@ -161,11 +190,18 @@ export const InventoryView: React.FC = () => {
       item.code.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const ingredientPurchases: Purchase[] = selectedIngredient
-  ? purchases.filter((p) => p.code === selectedIngredient.code)
-  : [];
+  // Live ingredient lookup so modal Stock & Avg Rate update immediately when a purchase is deleted
+  const activeSelectedIngredient = selectedIngredient
+    ? ingredients.find((i) => i.code === selectedIngredient.code) || selectedIngredient
+    : null;
 
-  const totalSpentOnItem = ingredientPurchases.reduce((sum, p) => sum + (p.total_cost || 0), 0);
+  const ingredientPurchases: Purchase[] = activeSelectedIngredient
+    ? purchases.filter((p) => p.code === activeSelectedIngredient.code)
+    : [];
+
+  const totalSpentOnItem = parseFloat(
+    ingredientPurchases.reduce((sum, p) => sum + (p.total_cost || 0), 0).toFixed(2)
+  );
 
   return (
     <div className="fixed top-[60px] bottom-[70px] left-0 right-0 flex flex-col w-full max-w-md mx-auto bg-gray-50 z-10">
@@ -199,7 +235,6 @@ export const InventoryView: React.FC = () => {
 
       {/* --- SCROLLABLE CARDS CONTAINER --- */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-24">
-        {/* BUG FIX: Added proper conditional wrapper to prevent the empty text from appearing below items */}
         {filteredIngredients.length === 0 ? (
           <div className="bg-white p-8 rounded-[20px] text-center text-gray-400 text-xs border border-gray-100 shadow-sm mt-4">
             {ingredients.length === 0 ? (
@@ -336,13 +371,13 @@ export const InventoryView: React.FC = () => {
       )}
 
       {/* Single-Ingredient Purchase History Drill-Down Modal */}
-      {selectedIngredient && (
+      {activeSelectedIngredient && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-4 shadow-2xl space-y-3 max-h-[85vh] flex flex-col">
             <div className="flex justify-between items-start border-b pb-2">
               <div>
-                <span className="text-[10px] font-mono font-bold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{selectedIngredient.code}</span>
-                <h3 className="font-bold text-base text-gray-900 mt-1">{selectedIngredient.name} Purchase History</h3>
+                <span className="text-[10px] font-mono font-bold bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{activeSelectedIngredient.code}</span>
+                <h3 className="font-bold text-base text-gray-900 mt-1">{activeSelectedIngredient.name} Purchase History</h3>
               </div>
               <button onClick={() => setSelectedIngredient(null)} className="text-gray-400 hover:text-gray-600 text-lg font-bold">✕</button>
             </div>
@@ -351,11 +386,11 @@ export const InventoryView: React.FC = () => {
             <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2.5 rounded-xl text-center text-xs">
               <div>
                 <span className="text-[10px] text-gray-400 block">Stock</span>
-                <span className="font-bold text-gray-800">{Number(selectedIngredient.stock || 0).toFixed(3)} {selectedIngredient.unit}</span>
+                <span className="font-bold text-gray-800">{Number(activeSelectedIngredient.stock || 0).toFixed(3)} {activeSelectedIngredient.unit}</span>
               </div>
               <div>
                 <span className="text-[10px] text-gray-400 block">Avg Rate</span>
-                <span className="font-bold text-rose-600">৳ {selectedIngredient.unit_cost}</span>
+                <span className="font-bold text-rose-600">৳ {activeSelectedIngredient.unit_cost}</span>
               </div>
               <div>
                 <span className="text-[10px] text-gray-400 block">Total Spent</span>
@@ -363,7 +398,7 @@ export const InventoryView: React.FC = () => {
               </div>
             </div>
 
-            {/* Batches */}
+            {/* Batches with Individual Delete Button */}
             <div className="flex-1 overflow-y-auto space-y-2 pr-1">
               <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Purchase Batches</p>
               {ingredientPurchases.length === 0 ? (
@@ -373,7 +408,21 @@ export const InventoryView: React.FC = () => {
                   <div key={pur.id} className="bg-gray-50 p-2.5 rounded-lg border border-gray-100 text-xs flex flex-col gap-1.5">
                     <div className="flex justify-between items-center font-bold text-gray-800">
                       <span>+{Number(pur.quantity || 0).toFixed(3)} {pur.unit} @ ৳{pur.unit_price}/{pur.unit}</span>
-                      <span className="text-gray-900">৳ {pur.total_cost}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-900">৳ {pur.total_cost}</span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (window.confirm(`Delete this purchase record (+${pur.quantity} ${pur.unit} @ ৳${pur.unit_price})? Stock and average rate will be recalculated.`)) {
+                              await deletePurchase(pur.id);
+                            }
+                          }}
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition"
+                          title="Delete mistaken purchase entry"
+                        >
+                          🗑️
+                        </button>
+                      </div>
                     </div>
                     <div className="flex flex-wrap justify-between items-center text-[10px] text-gray-500">
                       <span>Source: {pur.source || "Market"}</span>
@@ -393,7 +442,7 @@ export const InventoryView: React.FC = () => {
             <div className="pt-2 border-t flex gap-2">
               <button
                 onClick={() => {
-                  const target = selectedIngredient;
+                  const target = activeSelectedIngredient;
                   setSelectedIngredient(null);
                   handleOpenAddPurchase(target);
                 }}
@@ -403,9 +452,8 @@ export const InventoryView: React.FC = () => {
               </button>
               <button
                 onClick={() => {
-                  if (window.confirm(`Delete ${selectedIngredient.name}?`)) {
-                    // FIXED: Now properly using deleteIngredientItem
-                    deleteIngredientItem(selectedIngredient.code);
+                  if (window.confirm(`Archive ${activeSelectedIngredient.name}? Current stock will be set to 0, while its purchase history stays saved if you buy it again later.`)) {
+                    deleteIngredientItem(activeSelectedIngredient.code);
                     setSelectedIngredient(null);
                   }
                 }}
@@ -440,6 +488,11 @@ export const InventoryView: React.FC = () => {
                 className="w-full border rounded-lg p-2 mt-0.5 font-mono uppercase bg-gray-50"
                 disabled={isEditing}
               />
+              {matchedArchivedItem && (
+                <p className="text-[10px] text-amber-600 font-bold mt-1">
+                  ♻️ Restoring archived "{matchedArchivedItem.name}" ({matchedArchivedItem.code}) & its past purchase history.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2 text-xs">
@@ -449,7 +502,7 @@ export const InventoryView: React.FC = () => {
                   type="text"
                   required
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => handleNameChange(e.target.value)}
                   placeholder="e.g. Butter"
                   className="w-full border rounded-lg p-2 mt-0.5"
                 />

@@ -66,7 +66,8 @@ export type ShopSettings = {
 };
 
 interface BakeryContextType {
-  products: Product[]; ingredients: IngredientItem[]; orders: Order[]; purchases: Purchase[];
+  products: Product[]; ingredients: IngredientItem[]; allIngredients: IngredientItem[];
+  orders: Order[]; purchases: Purchase[];
   customers: CustomerSummary[]; shelfStock: ShelfItem[]; wasteLogs: WasteLog[];
   shopSettings: ShopSettings | null; stats: any; 
   fetchData: () => Promise<void>;
@@ -75,9 +76,11 @@ interface BakeryContextType {
   deleteIngredientItem: (code: string) => Promise<void>; deleteOrder: (id: string) => Promise<void>;
   deductIngredientItem: (code: string, quantity: number, reason: string) => Promise<void>;
   savePurchase: (purchase: any, minimum?: number) => Promise<void>;
+  deletePurchase: (purchaseId: string) => Promise<void>;
+  getNextIngredientCode: () => string;
   attachRecipeItem: (productCode: string, ingredientCode: string, quantity: number) => Promise<void>;
   createOrder: (parsed: ParsedOrder) => Promise<string>;
-  markOrderCompleted: (orderId: string) => Promise<void>;
+  markOrderCompleted: (orderId: string) => Promise<string>;
   logWaste: (shelfItemId: string, quantity: number) => Promise<void>;
   exportOrdersCSV: () => void; exportMonthlyCSV: () => Promise<void>;
 }
@@ -118,7 +121,6 @@ export const standardizeDateString = (dateStr: string) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-// Fast local session reader (avoids extra network roundtrip on every action)
 const getActiveUser = async () => {
   const { data: { session } } = await supabase.auth.getSession();
   if (session?.user) return session.user;
@@ -128,30 +130,56 @@ const getActiveUser = async () => {
 
 export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [products, setProducts] = useState<Product[]>([]);
-  const [ingredients, setIngredients] = useState<IngredientItem[]>([]);
+  const [allIngredients, setAllIngredients] = useState<IngredientItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [rawPurchases, setRawPurchases] = useState<Purchase[]>([]);
   const [shelfStock, setShelfStock] = useState<ShelfItem[]>([]);
   const [wasteLogs, setWasteLogs] = useState<WasteLog[]>([]);
   const [shopSettings, setShopSettings] = useState<ShopSettings | null>(null);
+
+  const ingredients = useMemo(
+    () => allIngredients.filter((i) => !i.is_deleted),
+    [allIngredients]
+  );
+
+  const purchases = useMemo(() => {
+    const activeCodes = new Set(ingredients.map((i) => i.code));
+    return rawPurchases.filter((p) => activeCodes.has(p.code));
+  }, [rawPurchases, ingredients]);
+
+  const getNextIngredientCode = useCallback(() => {
+    let highestNum = 0;
+    allIngredients.forEach((i) => {
+      if (i.code && i.code.startsWith("ING")) {
+        const num = parseInt(i.code.replace("ING", ""), 10);
+        if (!isNaN(num) && num > highestNum) highestNum = num;
+      }
+    });
+    rawPurchases.forEach((p) => {
+      if (p.code && p.code.startsWith("ING")) {
+        const num = parseInt(p.code.replace("ING", ""), 10);
+        if (!isNaN(num) && num > highestNum) highestNum = num;
+      }
+    });
+    return `ING${String(highestNum + 1).padStart(2, "0")}`;
+  }, [allIngredients, rawPurchases]);
 
   const fetchData = useCallback(async () => {
     try {
       const user = await getActiveUser();
       if (!user) return;
 
-      // 🚀 WAVE 1 (PRIORITY): Fetch core dashboard & header data in 1 parallel request
       const INITIAL_ORDER_LIMIT = 200;
       const [pRes, iRes, oRes, setRes, rosterRes] = await Promise.all([
         supabase.from("products").select("*").eq("user_id", user.id).eq("is_deleted", false).order("name", { ascending: true }),
-        supabase.from("ingredients").select("*").eq("user_id", user.id).eq("is_deleted", false).order("name", { ascending: true }),
+        supabase.from("ingredients").select("*").eq("user_id", user.id).order("name", { ascending: true }),
         supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }).limit(INITIAL_ORDER_LIMIT),
         supabase.from("shop_settings").select("*").eq("user_id", user.id).limit(1),
         supabase.from("client_roster").select("business_name").eq("user_id", user.id).limit(1)
       ]);
 
       if (pRes.data) setProducts(pRes.data as Product[]);
-      if (iRes.data) setIngredients(iRes.data as IngredientItem[]);
+      if (iRes.data) setAllIngredients(iRes.data as IngredientItem[]);
       if (oRes.data) setOrders(oRes.data as Order[]);
 
       const officialBusinessName = rosterRes.data && rosterRes.data.length > 0 ? rosterRes.data[0].business_name : "Rasel Food Ltd.";
@@ -165,19 +193,17 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
       }
 
-      // 🌊 WAVE 2 (BACKGROUND LAZY DOWNLOAD): Fetch secondary tables & older history without blocking UI
       Promise.all([
         supabase.from("shelf_stock").select("*").eq("user_id", user.id).gt("quantity", 0).order("expiry_date", { ascending: true }),
         supabase.from("waste_logs").select("*").eq("user_id", user.id).order("date", { ascending: false }),
         supabase.from("purchases").select("*").eq("user_id", user.id).order("date", { ascending: false }),
-        // If user has more than 200 orders, progressively pull the remaining history
         oRes.data && oRes.data.length === INITIAL_ORDER_LIMIT
           ? supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }).range(INITIAL_ORDER_LIMIT, 2000)
           : Promise.resolve({ data: null })
       ]).then(([sRes, wRes, purRes, olderOrdersRes]) => {
         if (sRes.data) setShelfStock(sRes.data as ShelfItem[]);
         if (wRes.data) setWasteLogs(wRes.data as WasteLog[]);
-        if (purRes.data) setPurchases(purRes.data as Purchase[]);
+        if (purRes.data) setRawPurchases(purRes.data as Purchase[]);
         if (olderOrdersRes.data && olderOrdersRes.data.length > 0) {
           setOrders(prev => {
             const existingIds = new Set(prev.map(o => `${o.id}-${o.product_code}`));
@@ -193,6 +219,38 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const recalculateAffectedProducts = async (userId: string, ingCode: string, newIngUnitCost: number) => {
+    const { data: affectedRecipes } = await supabase
+      .from("recipes")
+      .select("product_code")
+      .eq("ingredient_code", ingCode)
+      .eq("user_id", userId);
+
+    if (affectedRecipes && affectedRecipes.length > 0) {
+      const productCodes = [...new Set(affectedRecipes.map((r) => r.product_code))];
+      for (const pCode of productCodes) {
+        const { data: fullRecipe } = await supabase
+          .from("recipes")
+          .select("ingredient_code, quantity")
+          .eq("product_code", pCode)
+          .eq("user_id", userId);
+
+        if (fullRecipe) {
+          let recalculatedCost = 0;
+          fullRecipe.forEach((item) => {
+            const ingCost =
+              item.ingredient_code === ingCode
+                ? newIngUnitCost
+                : allIngredients.find((i) => i.code === item.ingredient_code)?.unit_cost || 0;
+            recalculatedCost += ingCost * item.quantity;
+          });
+          const roundedCost = parseFloat(recalculatedCost.toFixed(2));
+          await supabase.from("products").update({ cost: roundedCost }).eq("code", pCode).eq("user_id", userId);
+        }
+      }
+    }
+  };
 
   const updateShopSettings = async (updates: Partial<ShopSettings>) => {
     const user = await getActiveUser();
@@ -231,8 +289,16 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const deleteIngredientItem = async (code: string) => {
     const user = await getActiveUser();
     if (!user) return;
-    const { error } = await supabase.from("ingredients").update({ is_deleted: true }).eq("code", code).eq("user_id", user.id);
-    if (!error) setIngredients((prev) => prev.filter((item) => item.code !== code));
+    const { error } = await supabase
+      .from("ingredients")
+      .update({ is_deleted: true, stock: 0 })
+      .eq("code", code)
+      .eq("user_id", user.id);
+    if (!error) {
+      setAllIngredients((prev) =>
+        prev.map((item) => (item.code === code ? { ...item, is_deleted: true, stock: 0 } : item))
+      );
+    }
   };
 
   const deleteOrder = async (id: string) => {
@@ -277,11 +343,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const newStock = Math.max(0, parseFloat((currentItem.stock - quantity).toFixed(3)));
 
-    // 1. Update local stock state and DB
-    setIngredients((prev) => prev.map((item) => (item.code === code ? { ...item, stock: newStock } : item)));
+    setAllIngredients((prev) => prev.map((item) => (item.code === code ? { ...item, stock: newStock } : item)));
     await supabase.from("ingredients").update({ stock: newStock }).eq("code", code).eq("user_id", user.id);
 
-    // 2. Log into deductions table
     const newDeduction = {
       product_code: "MANUAL",
       product_name: "Manual Adjustment",
@@ -295,7 +359,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     await supabase.from("deductions").insert([newDeduction]);
 
-    // 3. Calculate financial loss and log to waste_logs
     const lossAmount = quantity * (currentItem.unit_cost || 0);
 
     if (lossAmount > 0) {
@@ -318,49 +381,119 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const user = await getActiveUser();
     if (!user) return;
 
+    const cleanName = (purchase.name || "").trim().toLowerCase();
+    const matchedByCode = allIngredients.find((i) => i.code === purchase.code);
+    const matchedByName = allIngredients.find((i) => i.name.trim().toLowerCase() === cleanName);
+
+    if (matchedByCode && matchedByCode.name.trim().toLowerCase() !== cleanName) {
+      alert(`Code ${purchase.code} is permanently locked to "${matchedByCode.name}". Please use a different code for "${purchase.name}".`);
+      return;
+    }
+
+    const existingIng = matchedByCode || matchedByName;
+    const finalCode = existingIng ? existingIng.code : purchase.code;
+    const finalName = existingIng ? existingIng.name : purchase.name.trim();
+
     let currentIngId = "";
     let weightedAvgCost = purchase.unit_price;
-    const exists = ingredients.find((i) => i.code === purchase.code);
 
-    if (exists) {
-      currentIngId = exists.id!; 
-      const updatedStock = parseFloat((exists.stock + purchase.quantity).toFixed(3));
-      const itemPurchases = purchases.filter((p) => p.ingredient_id === exists.id);
+    if (existingIng) {
+      currentIngId = existingIng.id!;
+      const baseStock = existingIng.is_deleted ? 0 : (existingIng.stock || 0);
+      const updatedStock = parseFloat((baseStock + purchase.quantity).toFixed(3));
+
+      const itemPurchases = rawPurchases.filter((p) => p.code === finalCode);
       const totalSpent = itemPurchases.reduce((acc, p) => acc + (p.total_cost || 0), 0) + (purchase.quantity * purchase.unit_price);
-      const totalQty = itemPurchases.reduce((acc, p) => acc + p.quantity, 0) + purchase.quantity;
+      const totalQty = itemPurchases.reduce((acc, p) => acc + (p.quantity || 0), 0) + purchase.quantity;
       weightedAvgCost = totalQty > 0 ? parseFloat((totalSpent / totalQty).toFixed(2)) : purchase.unit_price;
-      await supabase.from("ingredients").update({ stock: updatedStock, unit_cost: weightedAvgCost }).eq("id", currentIngId);
+
+      await supabase
+        .from("ingredients")
+        .update({
+          stock: updatedStock,
+          unit_cost: weightedAvgCost,
+          minimum,
+          unit: purchase.unit || existingIng.unit,
+          is_deleted: false
+        })
+        .eq("id", currentIngId);
     } else {
-      const { data: newIng, error } = await supabase.from("ingredients").insert([{
-        code: purchase.code, name: purchase.name, unit: purchase.unit, stock: purchase.quantity,
-        minimum, unit_cost: purchase.unit_price, user_id: user.id, is_deleted: false
-      }]).select().single();
+      const { data: newIng, error } = await supabase
+        .from("ingredients")
+        .insert([{
+          code: finalCode,
+          name: finalName,
+          unit: purchase.unit,
+          stock: purchase.quantity,
+          minimum,
+          unit_cost: purchase.unit_price,
+          user_id: user.id,
+          is_deleted: false
+        }])
+        .select()
+        .single();
       if (error) return alert("Error creating ingredient: " + error.message);
       if (newIng) currentIngId = newIng.id;
     }
 
-    const totalCost = purchase.quantity * purchase.unit_price;
+    const totalCost = parseFloat((purchase.quantity * purchase.unit_price).toFixed(2));
     const purId = `PUR-${Date.now().toString().slice(-6)}`;
-    const newPur = { id: purId, date: new Date().toISOString(), total_cost: totalCost, user_id: user.id, ingredient_id: currentIngId, ...purchase };
+    const newPur = {
+      id: purId,
+      date: new Date().toISOString(),
+      total_cost: totalCost,
+      user_id: user.id,
+      ingredient_id: currentIngId,
+      ...purchase,
+      code: finalCode,
+      name: finalName
+    };
     await supabase.from("purchases").insert([newPur]);
 
-    const { data: affectedRecipes } = await supabase.from("recipes").select("product_code").eq("ingredient_code", purchase.code).eq("user_id", user.id);
-    if (affectedRecipes && affectedRecipes.length > 0) {
-      const productCodes = [...new Set(affectedRecipes.map((r) => r.product_code))];
-      for (const pCode of productCodes) {
-        const { data: fullRecipe } = await supabase.from("recipes").select("ingredient_code, quantity").eq("product_code", pCode).eq("user_id", user.id);
-        if (fullRecipe) {
-          let recalculatedCost = 0;
-          fullRecipe.forEach((item) => {
-            const ingCost = item.ingredient_code === purchase.code ? weightedAvgCost : (ingredients.find((i) => i.code === item.ingredient_code)?.unit_cost || 0);
-            recalculatedCost += ingCost * item.quantity;
-          });
-          const roundedCost = parseFloat(recalculatedCost.toFixed(2));
-          await supabase.from("products").update({ cost: roundedCost }).eq("code", pCode).eq("user_id", user.id);
-        }
-      }
+    await recalculateAffectedProducts(user.id, finalCode, weightedAvgCost);
+    await fetchData();
+  };
+
+  const deletePurchase = async (purchaseId: string) => {
+    const user = await getActiveUser();
+    if (!user) return;
+
+    const targetPur = rawPurchases.find((p) => p.id === purchaseId);
+    if (!targetPur) return;
+
+    const { error: delError } = await supabase
+      .from("purchases")
+      .delete()
+      .eq("id", purchaseId)
+      .eq("user_id", user.id);
+
+    if (delError) {
+      alert("Failed to delete purchase record: " + delError.message);
+      return;
     }
-    await fetchData(); 
+
+    const remainingForIng = rawPurchases.filter(
+      (p) => p.id !== purchaseId && p.code === targetPur.code
+    );
+
+    const targetIng = allIngredients.find((i) => i.code === targetPur.code);
+    if (targetIng) {
+      const updatedStock = Math.max(0, parseFloat(((targetIng.stock || 0) - (targetPur.quantity || 0)).toFixed(3)));
+      const totalSpent = remainingForIng.reduce((acc, p) => acc + (p.total_cost || 0), 0);
+      const totalQty = remainingForIng.reduce((acc, p) => acc + (p.quantity || 0), 0);
+      const newAvgCost = totalQty > 0 ? parseFloat((totalSpent / totalQty).toFixed(2)) : 0;
+
+      await supabase
+        .from("ingredients")
+        .update({ stock: updatedStock, unit_cost: newAvgCost })
+        .eq("code", targetPur.code)
+        .eq("user_id", user.id);
+
+      await recalculateAffectedProducts(user.id, targetPur.code, newAvgCost);
+    }
+
+    setRawPurchases((prev) => prev.filter((p) => p.id !== purchaseId));
+    await fetchData();
   };
 
   const attachRecipeItem = async (productCode: string, ingredientCode: string, quantity: number) => {
@@ -391,16 +524,26 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const newDeductions: any[] = [];
     const dbPromises: any[] = [];
 
-    // KITCHEN PRODUCTION / SELF ORDER LOGIC
     if (parsed.customer === "Self") {
       const newShelfItems: any[] = [];
       for (const item of parsed.items) {
         const matchedProduct = products.find(p => p.code === item.productCode);
         const expiryDays = matchedProduct?.shelf_life_days || 2;
         const expiryDate = new Date(now.getTime() + expiryDays * 24 * 60 * 60 * 1000);
+
+        // Stamp this batch with the exact current product cost (morning vs evening batch cost lock)
+        const batchUnitCost = matchedProduct?.cost || 0;
+
         newShelfItems.push({
-          id: `SHLF-${Date.now()}-${Math.floor(Math.random() * 1000)}`, product_code: item.productCode, product_name: item.productName,
-          quantity: item.quantity, cost: item.cost / item.quantity, price: item.unitPrice, batch_date: now.toISOString(), expiry_date: expiryDate.toISOString(), user_id: user.id
+          id: `SHLF-${Date.now()}-${Math.floor(Math.random() * 1000)}`, 
+          product_code: item.productCode, 
+          product_name: item.productName,
+          quantity: item.quantity, 
+          cost: batchUnitCost, 
+          price: item.unitPrice, 
+          batch_date: now.toISOString(), 
+          expiry_date: expiryDate.toISOString(), 
+          user_id: user.id
         });
       }
       setShelfStock(prev => [...prev, ...newShelfItems]);
@@ -408,7 +551,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const { error: shelfError } = await supabase.from("shelf_stock").insert(newShelfItems);
       if (shelfError) {
           alert("SUPABASE REJECTED SHELF STOCK: " + shelfError.message);
-          console.error("Shelf Error:", shelfError);
           return "ERROR";
       }
 
@@ -420,7 +562,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             const currentIng = ingredients.find((i) => i.code === rItem.ingredient_code);
             if (currentIng) {
               const remainingStock = Math.max(0, parseFloat((currentIng.stock - deduction).toFixed(3)));
-              setIngredients((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
+              setAllIngredients((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
               dbPromises.push(supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id));
               newDeductions.push({
                 product_code: item.productCode, 
@@ -442,7 +584,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return "SHELF-STOCKED";
     }
 
-    // CUSTOMER ORDER PIPELINE - Meaningful format: R-02#01
     const activeBusinessName = shopSettings?.shop_name || "Rasel Food Ltd.";
     const firstLetter = activeBusinessName.charAt(0).toUpperCase();
     const dayOfMonth = now.getDate().toString().padStart(2, "0");
@@ -467,8 +608,29 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const item = parsed.items[i];
       const matchedProduct = products.find(p => p.code === item.productCode);
 
-      const actualUnitCost = matchedProduct?.cost || 0;
-      const actualTotalCost = actualUnitCost * item.quantity;
+      // BATCH PROFIT LOCK (FIFO): Deduct from shelf batches and use their exact locked batch cost
+      let totalBatchCost = 0;
+      let qtyToDeduct = item.quantity;
+      const availableBatches = shelfStock
+        .filter(s => s.product_code === item.productCode && s.quantity > 0)
+        .sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime());
+
+      for (const batch of availableBatches) {
+        if (qtyToDeduct <= 0) break;
+        const deductAmount = Math.min(batch.quantity, qtyToDeduct);
+        qtyToDeduct -= deductAmount;
+        totalBatchCost += deductAmount * (batch.cost || 0);
+
+        const newQty = batch.quantity - deductAmount;
+        setShelfStock(prev => prev.map(s => s.id === batch.id ? { ...s, quantity: newQty } : s));
+        dbPromises.push(supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id));
+      }
+
+      // If customer buys more than what's on the shelf, fall back to current catalog cost for the remainder
+      if (qtyToDeduct > 0) {
+        const fallbackUnitCost = matchedProduct?.cost || 0;
+        totalBatchCost += qtyToDeduct * fallbackUnitCost;
+      }
 
       const itemBaseTotal = item.quantity * item.unitPrice;
       let rowTotal = itemBaseTotal;
@@ -481,7 +643,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       else if (remainingAdvance > 0) { rowAdvance = remainingAdvance; remainingAdvance = 0; }
 
       const rowPending = actualOrderType === "Walk-in" ? 0 : Math.max(0, rowTotal - rowAdvance);
-      const rowProfit = itemBaseTotal - actualTotalCost;
+      const rowProfit = itemBaseTotal - totalBatchCost;
 
       newOrders.push({
         id: orderId,
@@ -492,7 +654,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         total: parseFloat(rowTotal.toFixed(2)),
         advance_paid: parseFloat(rowAdvance.toFixed(2)),
         pending_payment: parseFloat(rowPending.toFixed(2)), 
-        cost: parseFloat(actualTotalCost.toFixed(2)), 
+        cost: parseFloat(totalBatchCost.toFixed(2)), 
         profit: parseFloat(rowProfit.toFixed(2)),
         location: parsed.location, delivery_date: finalDeliveryDate, payment_method: parsed.paymentMethod, 
         status, 
@@ -505,21 +667,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const { error: orderError } = await supabase.from("orders").insert(newOrders);
     if (orderError) {
         alert("SUPABASE REJECTED THE ORDER: " + orderError.message);
-        console.error("Full Order Error:", orderError);
-    }
-
-    // DEDUCT FROM POS SHELF
-    for (const item of parsed.items) {
-      let qtyToDeduct = item.quantity;
-      const availableBatches = shelfStock.filter(s => s.product_code === item.productCode && s.quantity > 0).sort((a,b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime());
-      for (const batch of availableBatches) {
-          if (qtyToDeduct <= 0) break;
-          const deductAmount = Math.min(batch.quantity, qtyToDeduct);
-          qtyToDeduct -= deductAmount;
-          const newQty = batch.quantity - deductAmount;
-          setShelfStock(prev => prev.map(s => s.id === batch.id ? { ...s, quantity: newQty } : s));
-          dbPromises.push(supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id));
-      }
     }
 
     if (dbPromises.length > 0) await Promise.all(dbPromises);
@@ -528,9 +675,10 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const markOrderCompleted = async (orderId: string) => {
     const user = await getActiveUser();
-    if (!user) return;
+    if (!user) return orderId;
     setOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, status: "Completed" as const, advance_paid: o.total, pending_payment: 0 } : o));
     await supabase.from("orders").update({ status: "Completed", advance_paid: orders.find(o => o.id === orderId)?.total, pending_payment: 0 }).eq("id", orderId).eq("user_id", user.id);
+    return orderId;
   };
 
   const customers = useMemo(() => {
@@ -649,7 +797,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Download failed:", err);
-      alert("Your browser blocked the download. Please try from a different device.");
+      alert("Your browser blocked the download.");
     }
   };
 
@@ -685,6 +833,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         supabase.from("deductions").select("*").eq("user_id", user.id).gte("created_at", startIso).lte("created_at", endIso)
       ]);
 
+      const activeIngCodes = new Set((iData || []).map((i: any) => i.code));
+      const activePurData = (purData || []).filter((p: any) => activeIngCodes.has(p.code));
+
       let csvContent = `Daily Business Backup for Disaster Recovery\n`;
       csvContent += `Backup Date:,${localToday}\n`;
       csvContent += `Business:,${shopSettings?.shop_name || "Rasel Food Ltd."}\n\n`;
@@ -709,7 +860,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ["id", "date", "customer", "phone", "product_name", "quantity", "total", "cost", "profit", "status", "delivery_date"]
       );
 
-      csvContent += generateTableCSV("TODAY'S PURCHASES", purData || [],
+      csvContent += generateTableCSV("TODAY'S PURCHASES", activePurData,
         ["Date", "Ingredient Code", "Ingredient Name", "Qty Added", "Unit Price (৳)", "Total Cost (৳)", "Source"],
         ["date", "code", "name", "quantity", "unit_price", "total_cost", "source"]
       );
@@ -730,7 +881,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       );
 
       csvContent += generateTableCSV("CURRENT SHELF STOCK (FINISHED GOODS)", sData || [],
-        ["Product Code", "Product Name", "Qty Available", "Batch Date", "Expiry Date"],
+        ["Product Code", "Product Name", "Qty Available", "Batch Date", "Best Before (Expiry Date)"],
         ["product_code", "product_name", "quantity", "batch_date", "expiry_date"]
       );
 
@@ -749,7 +900,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     } catch (error) {
       console.error("Master Backup failed:", error);
-      alert("Failed to securely generate the database backup. Please check your connection.");
     }
   };
 
@@ -785,6 +935,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         supabase.from("deductions").select("*").eq("user_id", user.id).gte("created_at", startIso).lte("created_at", endIso)
       ]);
 
+      const activeIngCodes = new Set((iData || []).map((i: any) => i.code));
+      const activePurData = (purData || []).filter((p: any) => activeIngCodes.has(p.code));
+
       let csvContent = `Monthly Business Backup for Disaster Recovery\n`;
       csvContent += `Billing Month:,${monthYear}\n`;
       csvContent += `Business:,${shopSettings?.shop_name || "Rasel Food Ltd."}\n\n`;
@@ -809,7 +962,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ["id", "date", "customer", "phone", "product_name", "quantity", "total", "cost", "profit", "status", "delivery_date"]
       );
 
-      csvContent += generateTableCSV("THIS MONTH'S PURCHASES", purData || [],
+      csvContent += generateTableCSV("THIS MONTH'S PURCHASES", activePurData,
         ["Date", "Ingredient Code", "Ingredient Name", "Qty Added", "Unit Price (৳)", "Total Cost (৳)", "Source"],
         ["date", "code", "name", "quantity", "unit_price", "total_cost", "source"]
       );
@@ -830,7 +983,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       );
 
       csvContent += generateTableCSV("CURRENT SHELF STOCK (FINISHED GOODS)", sData || [],
-        ["Product Code", "Product Name", "Qty Available", "Batch Date", "Expiry Date"],
+        ["Product Code", "Product Name", "Qty Available", "Batch Date", "Best Before (Expiry Date)"],
         ["product_code", "product_name", "quantity", "batch_date", "expiry_date"]
       );
 
@@ -849,12 +1002,11 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     } catch (error) {
       console.error("Monthly Backup failed:", error);
-      alert("Failed to securely generate the database backup. Please check your connection.");
     }
   };
 
   return (
-    <BakeryContext.Provider value={{ products, ingredients, orders, purchases, customers, shelfStock, wasteLogs, shopSettings, stats, fetchData, updateShopSettings, addProduct, deleteProduct, deleteIngredientItem, deleteOrder, deductIngredientItem, savePurchase, attachRecipeItem, createOrder, markOrderCompleted, logWaste, exportOrdersCSV, exportMonthlyCSV }}>
+    <BakeryContext.Provider value={{ products, ingredients, allIngredients, orders, purchases, customers, shelfStock, wasteLogs, shopSettings, stats, fetchData, updateShopSettings, addProduct, deleteProduct, deleteIngredientItem, deleteOrder, deductIngredientItem, savePurchase, deletePurchase, getNextIngredientCode, attachRecipeItem, createOrder, markOrderCompleted, logWaste, exportOrdersCSV, exportMonthlyCSV }}>
       {children}
     </BakeryContext.Provider>
   );
