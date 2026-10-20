@@ -18,6 +18,8 @@ const CustomersView = lazy(() => import("./pages/CustomersView").then(m => ({ de
 const AdminPortalView = lazy(() => import("./AdminPortalView").then(m => ({ default: m.AdminPortalView })));
 const ClientLockoutView = lazy(() => import("./ClientLockoutView").then(m => ({ default: m.ClientLockoutView })));
 
+
+
 // Lightweight loading UI shown for a split-second when downloading a tab for the first time
 function PageLoader() {
   return (
@@ -467,7 +469,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
         </Suspense>
       </main>
 
-      <TimeTravelBar />
+      
 
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-gray-200 px-4 py-2 flex justify-between items-center z-40 shadow-lg">
         <button
