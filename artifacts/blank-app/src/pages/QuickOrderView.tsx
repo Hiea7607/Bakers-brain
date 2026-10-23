@@ -499,7 +499,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
     y += 15;
     drawCentered("Powered by Hiea Software Ltd.", "bold 10px sans-serif", "#64748b");
     y += 20;
-    drawCentered("✨ Thank you for treating yourself today!", "italic 11px sans-serif", "#0f172a");
+    drawCentered("✨ Thank you for trusting our taste!", "italic 11px sans-serif", "#0f172a");
 
     // Trigger Instant PNG Download
     canvas.toBlob((blob) => {
@@ -940,7 +940,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                        Powered by Hiea Software Ltd.
                     </div>
                     <div className="text-xs font-semibold italic mt-2 text-black">
-                       ✨ Thank you for treating yourself today!<br/>We hope to see you again soon.
+                       ✨ Thank you for trusting our taste!<br/>We hope to see you again soon.
                     </div>
                   </div>
                 </>

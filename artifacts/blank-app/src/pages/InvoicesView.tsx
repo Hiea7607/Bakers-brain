@@ -226,7 +226,7 @@ export const InvoicesView: React.FC = () => {
                    Powered by Hiea Software Ltd.
                 </div>
                 <div className="text-xs font-semibold italic mt-2 text-black">
-                   ✨ Thank you for treating yourself today!<br/>We hope to see you again soon.
+                   ✨ Thank you for trusting our taste!<br/>We hope to see you again soon.
                 </div>
               </div>
             </div>
