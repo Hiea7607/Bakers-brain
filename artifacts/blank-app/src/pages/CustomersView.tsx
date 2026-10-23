@@ -373,7 +373,7 @@ export const CustomersView: React.FC = () => {
                    {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} | {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                 </div>
                 <div className="text-[10px] text-gray-500 font-bold print:text-black">
-                   Powered by tongka
+                   Powered by Hiea Software Ltd.
                 </div>
               </div>
             </div>

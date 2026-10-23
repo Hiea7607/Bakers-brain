@@ -722,7 +722,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                        {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} | {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                     <div className="text-[10px] text-gray-500 font-bold print:text-black">
-                       Powered by tongka
+                       Powered by Hiea Software Ltd.
                     </div>
                     <div className="text-xs font-semibold italic mt-2 text-black">
                        ✨ Thank you for treating yourself today!<br/>We hope to see you again soon.

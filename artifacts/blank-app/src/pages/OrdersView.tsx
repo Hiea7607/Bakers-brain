@@ -140,7 +140,7 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
            </div>
 
            <div className="text-center text-[10px] font-bold mt-8">
-              Powered by tongka
+              Powered by Hiea Software Ltd.
            </div>
         </div>
       )}
