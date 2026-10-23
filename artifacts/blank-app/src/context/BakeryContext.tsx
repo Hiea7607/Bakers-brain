@@ -643,40 +643,30 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const item = parsed.items[i];
       const matchedProduct = products.find(p => p.code === item.productCode);
 
+      // 1. Check Display Shelf Stock first (FIFO)
       let totalBatchCost = 0;
       let qtyToDeduct = item.quantity;
+      const availableBatches = shelfStock
+        .filter(s => s.product_code === item.productCode && s.quantity > 0)
+        .sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime());
 
-      // 1. Only Walk-in / POS sales check and pull from the Display Shelf (FIFO)
-      if (actualOrderType === "Walk-in") {
-        const availableBatches = shelfStock
-          .filter(s => s.product_code === item.productCode && s.quantity > 0)
-          .sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime());
+      for (const batch of availableBatches) {
+        if (qtyToDeduct <= 0) break;
+        const deductAmount = Math.min(batch.quantity, qtyToDeduct);
+        qtyToDeduct -= deductAmount;
+        totalBatchCost += deductAmount * (batch.cost || 0);
 
-        for (const batch of availableBatches) {
-          if (qtyToDeduct <= 0) break;
-          const deductAmount = Math.min(batch.quantity, qtyToDeduct);
-          qtyToDeduct -= deductAmount;
-          totalBatchCost += deductAmount * (batch.cost || 0);
-
-          const newQty = batch.quantity - deductAmount;
-          setShelfStock(prev => prev.map(s => s.id === batch.id ? { ...s, quantity: newQty } : s));
-          dbPromises.push(supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id));
-        }
+        const newQty = batch.quantity - deductAmount;
+        setShelfStock(prev => prev.map(s => s.id === batch.id ? { ...s, quantity: newQty } : s));
+        dbPromises.push(supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id));
       }
 
-      // 2. Online orders (Queue Delivery) bypass shelf completely and deduct fresh raw ingredients from stock
+      // 2. If not on shelf (qtyToDeduct > 0), use catalog recipe cost AND immediately deduct raw ingredients!
       if (qtyToDeduct > 0) {
         const fallbackUnitCost = matchedProduct?.cost || 0;
         totalBatchCost += qtyToDeduct * fallbackUnitCost;
-        await deductRawIngredientsByRecipe(
-          item.productCode, 
-          item.productName, 
-          qtyToDeduct, 
-          actualOrderType === "Online" ? "Online Order" : "Customer Order"
-        );
+        await deductRawIngredientsByRecipe(item.productCode, item.productName, qtyToDeduct, "Customer Order");
       }
-
-      
 
       const itemBaseTotal = item.quantity * item.unitPrice;
       let rowTotal = itemBaseTotal;
