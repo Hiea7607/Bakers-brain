@@ -16,6 +16,9 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
   const [parsed, setParsed] = useState<(ParsedOrder & { discountAmount?: number }) | null>(initialCart || null);
   const [createdTokenId, setCreatedTokenId] = useState<string | null>(null);
 
+  // Toggle for clean manual screenshot mode
+  const [cleanScreenshotMode, setCleanScreenshotMode] = useState(false);
+
   useEffect(() => {
     if (initialCart) setParsed(initialCart);
   }, [initialCart]);
@@ -79,7 +82,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
     const autoVatAmount = parseFloat(((subtotal * globalVatRate) / 100).toFixed(2));
     const grandTotal = subtotal + autoVatAmount;
 
-    // THE FIX: Forces POS orders to output strict "10 Oct 2026"
     const beautifulTodayDate = formatToUniversalDate(standardizeDateString("today"));
 
     setParsed({
@@ -121,7 +123,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
           else if (lower.startsWith("address:") || lower.startsWith("location:")) location = line.split(":")[1]?.trim() || location;
           else if (lower.startsWith("email:")) email = line.split(":")[1]?.trim() || email;
           else if (lower.startsWith("date:") || lower.startsWith("delivery date:")) {
-            // THE FIX: Grab the text exactly as they typed it (e.g. "tomorrow", "10-10-2026")
             rawDateStr = line.split(":")[1]?.trim() || "today";
           }
           else if (lower.startsWith("delivery") && (lower.includes("charge") || lower.includes("cost"))) deliveryCharge = parseFloat((line.match(/[\d\.]+/) || ["0"])[0]);
@@ -185,7 +186,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
 
       const grandTotal = subtotal + deliveryCharge + autoVatAmount - discountAmount;
 
-      // THE FIX: Translates whatever they typed into the beautiful format instantly
       const beautifulParsedDate = formatToUniversalDate(standardizeDateString(rawDateStr));
 
       setParsed({
@@ -293,6 +293,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
       setCreatedTokenId(null);
       setRawText("");
       setPosCart([]);
+      setCleanScreenshotMode(false);
     }
   };
 
@@ -302,39 +303,249 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
     setRawText(""); 
     setPosCart([]); 
     setActiveTab('pos');
+    setCleanScreenshotMode(false);
+  };
+
+  const generateInvoiceText = () => {
+    if (!parsed) return "";
+    const cr = "\r\n"; 
+
+    let text = `🧾 INVOICE: ${businessName}${cr}Receipt No: ${createdTokenId || ""}${cr}${cr}`;
+    text += `Customer: ${parsed.customer}${cr}`;
+    if (parsed.phone) text += `Phone: ${parsed.phone}${cr}`;
+    text += `Location: ${parsed.location}${cr}`;
+    text += `Date: ${parsed.deliveryDate}${cr}`;
+    text += `------------------------${cr}`;
+
+    parsed.items.forEach(item => {
+      text += `${item.quantity}x ${item.productName} - ${CURRENCY} ${(item.unitPrice * item.quantity).toFixed(2)}${cr}`;
+    });
+
+    text += `------------------------${cr}`;
+    text += `Subtotal: ${CURRENCY} ${parsed.subtotal.toFixed(2)}${cr}`;
+    if (parsed.deliveryCharge > 0) text += `Delivery: ${CURRENCY} ${parsed.deliveryCharge.toFixed(2)}${cr}`;
+    if ((parsed.discountAmount || 0) > 0) text += `Discount: -${CURRENCY} ${(parsed.discountAmount || 0).toFixed(2)}${cr}`;
+    text += `GRAND TOTAL: ${CURRENCY} ${parsed.total.toFixed(2)}${cr}${cr}`;
+    text += `Paid/Advance: ${CURRENCY} ${parsed.advancePaid.toFixed(2)}${cr}`;
+    text += `DUE TO COLLECT: ${CURRENCY} ${parsed.pendingPayment.toFixed(2)}${cr}${cr}`;
+    text += `Thank you for your order!`;
+
+    return encodeURIComponent(text);
+  };
+
+  const getEmailLink = () => {
+    const safeEmail = parsed?.email || "";
+    return `mailto:${safeEmail}?subject=${encodeURIComponent(`Invoice #${createdTokenId || ""} from ${businessName}`)}&body=${generateInvoiceText()}`;
+  };
+
+  // 📸 100% NATIVE BROWSER RECEIPT IMAGE GENERATOR (Zero external libraries, never fails!)
+  const handleDownloadImage = () => {
+    if (!parsed) return;
+
+    const canvas = document.createElement("canvas");
+    const scale = 2; // High-DPI crispness
+    const width = 360;
+    const itemRowsHeight = parsed.items.length * 26;
+    const height = 560 + itemRowsHeight;
+
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(scale, scale);
+
+    // 1. White Receipt Background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+
+    let y = 35;
+
+    const drawCentered = (text: string, font: string, color = "#000000") => {
+      ctx.font = font;
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.fillText(text, width / 2, y);
+    };
+
+    const drawRow = (left: string, right: string, font = "12px sans-serif", color = "#000000") => {
+      ctx.font = font;
+      ctx.fillStyle = color;
+      ctx.textAlign = "left";
+      ctx.fillText(left, 24, y);
+      ctx.textAlign = "right";
+      ctx.fillText(right, width - 24, y);
+    };
+
+    const drawDashedLine = () => {
+      ctx.beginPath();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.lineWidth = 1.5;
+      ctx.moveTo(24, y);
+      ctx.lineTo(width - 24, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+
+    // Header
+    drawCentered(businessName.toUpperCase(), "900 20px sans-serif");
+    y += 18;
+
+    if (shopSettings?.shop_address) {
+      drawCentered(shopSettings.shop_address, "11px sans-serif", "#475569");
+      y += 15;
+    }
+    const contactLine = [
+      shopSettings?.shop_phone ? `Tel: ${shopSettings.shop_phone}` : "",
+      businessEmail ? businessEmail : ""
+    ].filter(Boolean).join(" | ");
+    if (contactLine) {
+      drawCentered(contactLine, "10px sans-serif", "#475569");
+      y += 15;
+    }
+
+    y += 5;
+    drawDashedLine();
+    y += 22;
+
+    // Title
+    drawCentered("COMMERCIAL INVOICE", "bold 13px sans-serif");
+    y += 16;
+    drawCentered(`Receipt No: ${createdTokenId || "N/A"}`, "11px monospace", "#64748b");
+    y += 22;
+
+    // Customer Info
+    drawRow("Customer:", parsed.customer, "bold 12px sans-serif");
+    y += 18;
+    drawRow("Phone:", parsed.phone || "N/A", "12px sans-serif");
+    y += 18;
+    const cleanLoc = parsed.location.length > 26 ? parsed.location.slice(0, 26) + "..." : parsed.location;
+    drawRow("Location:", cleanLoc, "12px sans-serif");
+    y += 18;
+    drawRow(parsed.orderType === "Online" ? "Delivery Date:" : "Date:", parsed.deliveryDate, "12px sans-serif");
+    y += 18;
+    drawRow("Payment By:", parsed.paymentMethod, "12px sans-serif");
+    y += 14;
+
+    drawDashedLine();
+    y += 20;
+
+    // Items Header
+    drawRow("ITEM & QTY", "TOTAL", "bold 10px sans-serif", "#64748b");
+    y += 18;
+
+    parsed.items.forEach((item) => {
+      const itemLabel = `${item.productName} × ${item.quantity}`;
+      const itemTotal = `${CURRENCY} ${(item.unitPrice * item.quantity).toFixed(2)}`;
+      drawRow(itemLabel, itemTotal, "bold 12px sans-serif");
+      y += 22;
+    });
+
+    y += 4;
+    drawDashedLine();
+    y += 20;
+
+    // Totals
+    drawRow("Subtotal:", `${CURRENCY} ${parsed.subtotal.toFixed(2)}`, "12px sans-serif", "#334155");
+    y += 18;
+
+    if (parsed.deliveryCharge > 0) {
+      drawRow("Delivery Charge:", `${CURRENCY} ${parsed.deliveryCharge.toFixed(2)}`, "12px sans-serif", "#334155");
+      y += 18;
+    }
+
+    drawRow(`VAT (${shopSettings?.default_tax_rate || 0}%):`, `${CURRENCY} ${parsed.vatAmount.toFixed(2)}`, "12px sans-serif", "#334155");
+    y += 18;
+
+    if ((parsed.discountAmount || 0) > 0) {
+      drawRow("Discount:", `- ${CURRENCY} ${(parsed.discountAmount || 0).toFixed(2)}`, "12px sans-serif", "#334155");
+      y += 18;
+    }
+
+    // Solid Line
+    ctx.beginPath();
+    ctx.strokeStyle = "#1e293b";
+    ctx.lineWidth = 2;
+    ctx.moveTo(24, y);
+    ctx.lineTo(width - 24, y);
+    ctx.stroke();
+    y += 22;
+
+    drawRow("GRAND TOTAL:", `${CURRENCY} ${parsed.total.toFixed(2)}`, "900 15px sans-serif", "#000000");
+    y += 16;
+
+    drawDashedLine();
+    y += 20;
+
+    drawRow("Paid / Advance:", `${CURRENCY} ${parsed.advancePaid.toFixed(2)}`, "12px sans-serif", "#334155");
+    y += 14;
+
+    // Due Box
+    ctx.fillStyle = "#f1f5f9";
+    ctx.fillRect(20, y, width - 40, 32);
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(20, y, width - 40, 32);
+    y += 21;
+    drawRow("DUE TO COLLECT:", `${CURRENCY} ${parsed.pendingPayment.toFixed(2)}`, "900 13px sans-serif", "#000000");
+    y += 26;
+
+    drawDashedLine();
+    y += 22;
+
+    const timeStr = `${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} | ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    drawCentered(timeStr, "10px sans-serif", "#64748b");
+    y += 15;
+    drawCentered("Powered by Hiea Software Ltd.", "bold 10px sans-serif", "#64748b");
+    y += 20;
+    drawCentered("✨ Thank you for treating yourself today!", "italic 11px sans-serif", "#0f172a");
+
+    // Trigger Instant PNG Download
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Invoice_${createdTokenId || "Receipt"}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, "image/png");
   };
 
   return (
     <div className="space-y-4 relative">
 
-      {/* 🔴 AGGRESSIVE PDF ISOLATION STYLES 🔴 */}
+      {/* 🔴 POS 80MM THERMAL ROLL PRINT CSS 🔴 */}
       <style>{`
         @media print {
-          @page { size: auto; margin: 0; }
-          body { background-color: white !important; }
-
-          /* Force EVERYTHING on the screen to hide completely */
+          @page { 
+            margin: 0; 
+            size: 80mm auto; 
+          }
+          body { background-color: white !important; margin: 0; padding: 0; }
           body * { visibility: hidden; }
-
-          /* Force ONLY the invoice and its text to show */
           #printable-invoice-container, #printable-invoice-container * {
             visibility: visible;
           }
-
-          /* Snap the invoice perfectly to the top left of the page */
           #printable-invoice-container {
             position: absolute;
             left: 0;
             top: 0;
-            width: 100%;
+            width: 80mm; 
             margin: 0;
-            padding: 15px; 
+            padding: 4mm; 
+            box-shadow: none !important;
+            border: none !important;
+            page-break-after: auto; 
           }
-
-          /* Explicitly hide the buttons inside the invoice so they don't print */
-          .hide-on-print, .hide-on-print * {
+          #printable-invoice-container * {
+            page-break-inside: avoid;
+          }
+          .hide-on-print {
             display: none !important;
-            visibility: hidden !important;
           }
         }
       `}</style>
@@ -444,7 +655,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
             </div>
           )}
 
-          {/* --- CHECKOUT VIEW --- */}
           {parsed && (
             <div className={`bg-white p-4 rounded-xl shadow-md border-2 print:hidden ${parsed.customer === 'Self' ? 'border-indigo-200' : 'border-emerald-100'} space-y-3 relative`}>
               <button onClick={handleCancelOrder} className="absolute -top-3 -right-3 bg-red-100 text-red-600 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-full font-bold text-[10px] shadow border border-red-200 transition">✕ Cancel</button>
@@ -482,7 +692,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                              <label className="text-[10px] font-bold text-gray-500 block mb-1">
                                {parsed.orderType === 'Online' ? 'Delivery Date' : 'Date'}
                              </label>
-                             {/* THE FIX: THE MAGIC INPUT BOX (onBlur auto-corrects to the beautiful format!) */}
                              <input 
                                type="text" 
                                value={parsed.deliveryDate} 
@@ -545,7 +754,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                       <div className="flex justify-between text-[13px] font-black text-gray-900 mt-2"><span>Grand Total:</span><span>{CURRENCY} {parsed.total}</span></div>
 
                       <div className="flex justify-between items-center text-gray-600 font-bold mt-3">
-                         <span>Payment Method:</span>
+                         <span>Payment By:</span>
                          <input 
                            type="text"
                            value={parsed.paymentMethod || ""}
@@ -583,18 +792,26 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
       ) : (
 
         /* --- THE PRINTABLE INVOICE WRAPPER --- */
-        <div id="printable-invoice-container" className="space-y-3 p-4 bg-white rounded-xl shadow-lg border border-gray-200 max-w-sm mx-auto font-sans relative">
+        <div 
+          id="printable-invoice-container" 
+          onClick={() => { if (cleanScreenshotMode) setCleanScreenshotMode(false); }}
+          className={`space-y-3 p-5 bg-white rounded-2xl shadow-lg border border-gray-200 max-w-sm mx-auto font-sans relative transition ${cleanScreenshotMode ? 'cursor-pointer ring-4 ring-indigo-100' : ''}`}
+        >
 
-          <button onClick={handleStayOnPageReset} className="absolute -top-3 -right-3 bg-gray-100 text-gray-600 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-full font-bold text-[10px] shadow border border-gray-200 transition hide-on-print">✕ Close</button>
+          {!cleanScreenshotMode && (
+            <button onClick={handleStayOnPageReset} className="absolute -top-3 -right-3 bg-gray-100 text-gray-600 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-full font-bold text-[10px] shadow border border-gray-200 transition hide-on-print">✕ Close</button>
+          )}
 
           {parsed?.customer === 'Self' ? (
             /* --- KITCHEN TAGS --- */
             <div className="text-center">
-              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-3xl mx-auto shadow-sm mb-4 hide-on-print">✅</div>
-              <div className="mb-4 hide-on-print">
-                <h3 className="text-xl font-black text-gray-900 tracking-tight">Labels Ready!</h3>
-                <p className="text-xs text-gray-500 font-medium mt-1">Load your tag printer and click print.</p>
-              </div>
+              {!cleanScreenshotMode && (
+                <div className="mb-4 hide-on-print">
+                  <div className="w-14 h-14 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-2xl mx-auto shadow-sm mb-2">✅</div>
+                  <h3 className="text-lg font-black text-gray-900 tracking-tight">Labels Ready!</h3>
+                  <p className="text-xs text-gray-500 font-medium mt-0.5">Load your tag printer and click print.</p>
+                </div>
+              )}
 
               <div className="print:block print:w-[80mm] print:mx-auto">
                 {parsed.items.flatMap((item, itemIdx) => 
@@ -610,7 +827,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                     return (
                       <div key={`${itemIdx}-${qtyIdx}`} className="print:w-full print:border-b-2 print:border-dashed print:border-black print:pb-6 print:mb-6 print:break-inside-avoid">
                         <h2 className="text-center font-black text-lg uppercase tracking-widest text-black mb-1">{businessName}</h2>
-
                         <h3 className="text-center font-bold text-2xl text-black mb-1 leading-tight">{item.productName}</h3>
 
                         <div className="text-[13px] font-bold text-black space-y-1 bg-gray-100 p-2 rounded-lg print:bg-transparent print:border print:border-black print:p-2 mt-4">
@@ -658,7 +874,6 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
 
                     <div className="flex justify-between">
                       <span className="font-medium">{parsed.orderType === 'Online' ? 'Delivery Date:' : 'Date:'}</span> 
-                      {/* THE FIX: Invoice directly renders the locked-in beautiful date state */}
                       <span className="font-bold">{parsed.deliveryDate}</span>
                     </div>
 
@@ -692,7 +907,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                     )}
 
                     <div className="flex justify-between"><span>VAT (Auto {shopSettings?.default_tax_rate || 0}%):</span><span>{CURRENCY} {parsed.vatAmount.toFixed(2)}</span></div>
-                    {parsed.discountAmount > 0 && <div className="flex justify-between"><span>Discount:</span><span>- {CURRENCY} {parsed.discountAmount.toFixed(2)}</span></div>}
+                    {(parsed.discountAmount || 0) > 0 && <div className="flex justify-between"><span>Discount:</span><span>- {CURRENCY} {(parsed.discountAmount || 0).toFixed(2)}</span></div>}
                   </div>
 
                   <div className="border-t-2 border-gray-800 my-3 print:border-black"></div>
@@ -733,18 +948,65 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
             </div>
           )}
 
-          <div className="flex gap-2 pt-6 hide-on-print">
-            <button onClick={() => window.print()} className="flex-1 bg-gray-800 hover:bg-black text-white font-bold py-3.5 rounded-xl text-xs shadow transition flex items-center justify-center gap-2">🖨️ Print</button>
-            {parsed?.customer !== 'Self' && (
-              <>
-                <a href={`https://wa.me/${parsed?.phone.replace(/[^0-9]/g, '')}`} target="_blank" rel="noreferrer" className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3.5 rounded-xl text-xs shadow transition flex items-center justify-center gap-2">💬 WhatsApp</a>
-                <a href={`mailto:${parsed?.email || ''}`} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3.5 rounded-xl text-xs shadow transition flex items-center justify-center gap-2">✉️ Email</a>
-              </>
-            )}
-          </div>
-          <div className="pt-2 hide-on-print">
-             <button onClick={handleStayOnPageReset} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-xs shadow-sm transition">← Finish & Start New</button>
-          </div>
+          {/* --- ACTION BAR (Hidden when printing or in Clean Screenshot Mode) --- */}
+          {cleanScreenshotMode ? (
+            <div className="pt-3 text-center text-[10px] text-indigo-500 font-bold hide-on-print">
+              📸 Take your screenshot now! (Tap anywhere on receipt to show buttons)
+            </div>
+          ) : (
+            <div className="space-y-2 pt-5 border-t border-gray-100 hide-on-print">
+              <div className="grid grid-cols-2 gap-2">
+                <button 
+                  onClick={() => window.print()} 
+                  className="bg-gray-900 hover:bg-black text-white font-bold py-3 rounded-xl text-xs shadow-sm transition flex items-center justify-center gap-1.5 active:scale-95"
+                >
+                  🖨️ Print Roll
+                </button>
+
+                {parsed?.customer !== 'Self' ? (
+                  <button 
+                    onClick={handleDownloadImage} 
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs shadow-sm transition flex items-center justify-center gap-1.5 active:scale-95"
+                  >
+                    📸 Save Image
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => setCleanScreenshotMode(true)} 
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs shadow-sm transition flex items-center justify-center gap-1.5 active:scale-95"
+                  >
+                    👁️ Clean View
+                  </button>
+                )}
+              </div>
+
+              {parsed?.customer !== 'Self' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <a 
+                    href={getEmailLink()} 
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-xs shadow-sm transition flex items-center justify-center gap-1.5 active:scale-95"
+                  >
+                    ✉️ Send Email
+                  </a>
+                  <button 
+                    onClick={() => setCleanScreenshotMode(true)} 
+                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl text-xs transition flex items-center justify-center gap-1.5 active:scale-95"
+                    title="Hide buttons to take a manual screenshot"
+                  >
+                    👁️ Clean View
+                  </button>
+                </div>
+              )}
+
+              <button 
+                onClick={handleStayOnPageReset} 
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl text-xs shadow-sm transition mt-2 active:scale-95"
+              >
+                ← Finish & Start New Order
+              </button>
+            </div>
+          )}
+
         </div>
       )}
     </div>
