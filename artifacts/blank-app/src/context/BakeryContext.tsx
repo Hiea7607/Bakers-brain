@@ -22,6 +22,7 @@ export type Purchase = {
 
 export type Order = {
   id: string; product_id?: string; date: string; time: string; customer: string; phone: string;
+  email?: string;
   product_code: string; product_name: string; quantity: number; unit_price: number;
   total: number; advance_paid: number; pending_payment: number; cost: number;
   profit: number; location: string; delivery_date: string; payment_method: string;
@@ -45,7 +46,9 @@ export type ParsedOrder = {
 };
 
 export type CustomerSummary = {
-  name: string; phone: string; totalOrders: number; totalSpent: number;
+  customer_id: string;
+  name: string; phone: string; email: string; totalOrders: number; totalSpent: number;
+  totalPaid: number; totalDue: number;
   totalProfit: number; lastOrderDate: string; favoriteProduct: string;
   avgOrderValue: number; tier: "Best" | "Medium" | "Regular"; address: string;
 };
@@ -100,13 +103,13 @@ export const standardizeDateString = (dateStr: string) => {
   } else {
     const parts = cleanStr.split(/[/-]/); 
     if (parts.length === 3) {
-       const day = parseInt(parts[0], 10);
-       const month = parseInt(parts[1], 10) - 1;
-       let year = parseInt(parts[2], 10);
-       if (year < 100) year += 2000;
-       targetDate = new Date(year, month, day);
+      const day = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      let year = parseInt(parts[2], 10);
+      if (year < 100) year += 2000;
+      targetDate = new Date(year, month, day);
     } else {
-       targetDate = new Date(cleanStr);
+      targetDate = new Date(cleanStr);
     }
   }
 
@@ -135,6 +138,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [rawPurchases, setRawPurchases] = useState<Purchase[]>([]);
   const [shelfStock, setShelfStock] = useState<ShelfItem[]>([]);
   const [wasteLogs, setWasteLogs] = useState<WasteLog[]>([]);
+  const [recipesList, setRecipesList] = useState<{ product_code: string; ingredient_code: string; quantity: number }[]>([]);
   const [shopSettings, setShopSettings] = useState<ShopSettings | null>(null);
 
   const ingredients = useMemo(
@@ -170,17 +174,19 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (!user) return;
 
       const INITIAL_ORDER_LIMIT = 200;
-      const [pRes, iRes, oRes, setRes, rosterRes] = await Promise.all([
+      const [pRes, iRes, oRes, setRes, rosterRes, recRes] = await Promise.all([
         supabase.from("products").select("*").eq("user_id", user.id).eq("is_deleted", false).order("name", { ascending: true }),
         supabase.from("ingredients").select("*").eq("user_id", user.id).order("name", { ascending: true }),
         supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }).limit(INITIAL_ORDER_LIMIT),
         supabase.from("shop_settings").select("*").eq("user_id", user.id).limit(1),
-        supabase.from("client_roster").select("business_name").eq("user_id", user.id).limit(1)
+        supabase.from("client_roster").select("business_name").eq("user_id", user.id).limit(1),
+        supabase.from("recipes").select("product_code, ingredient_code, quantity").eq("user_id", user.id)
       ]);
 
       if (pRes.data) setProducts(pRes.data as Product[]);
       if (iRes.data) setAllIngredients(iRes.data as IngredientItem[]);
       if (oRes.data) setOrders(oRes.data as Order[]);
+      if (recRes.data) setRecipesList(recRes.data);
 
       const officialBusinessName = rosterRes.data && rosterRes.data.length > 0 ? rosterRes.data[0].business_name : "Rasel Food Ltd.";
 
@@ -445,6 +451,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       user_id: user.id,
       ingredient_id: currentIngId,
       ...purchase,
+       source: (purchase.source || "").trim(),
       code: finalCode,
       name: finalName
     };
@@ -501,6 +508,10 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!user) return;
     await supabase.from("recipes").delete().eq("product_code", productCode).eq("ingredient_code", ingredientCode).eq("user_id", user.id);
     await supabase.from("recipes").insert([{ product_code: productCode, ingredient_code: ingredientCode, quantity, user_id: user.id }]);
+    setRecipesList(prev => [
+      ...prev.filter(r => !(r.product_code === productCode && r.ingredient_code === ingredientCode)),
+      { product_code: productCode, ingredient_code: ingredientCode, quantity }
+    ]);
   };
 
   const logWaste = async (shelfItemId: string, quantity: number) => {
@@ -524,14 +535,55 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const newDeductions: any[] = [];
     const dbPromises: any[] = [];
 
+    // Track cumulative ingredient deductions across all items in this order
+    const liveStockMap: Record<string, number> = {};
+    ingredients.forEach(ing => { liveStockMap[ing.code] = ing.stock; });
+
+    const deductRawIngredientsByRecipe = async (productCode: string, productName: string, qtyToMake: number, orderReason: string) => {
+      if (qtyToMake <= 0) return;
+      const { data: recipeData } = await supabase
+        .from("recipes")
+        .select("ingredient_code, quantity")
+        .eq("product_code", productCode)
+        .eq("user_id", user.id);
+
+      if (recipeData && recipeData.length > 0) {
+        for (const rItem of recipeData) {
+          const deduction = parseFloat((rItem.quantity * qtyToMake).toFixed(3));
+          const currentIng = ingredients.find((i) => i.code === rItem.ingredient_code);
+          if (currentIng && deduction > 0) {
+            const baseStock = liveStockMap[rItem.ingredient_code] ?? currentIng.stock;
+            const remainingStock = Math.max(0, parseFloat((baseStock - deduction).toFixed(3)));
+            liveStockMap[rItem.ingredient_code] = remainingStock;
+
+            setAllIngredients((prev) =>
+              prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing)
+            );
+            dbPromises.push(
+              supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id)
+            );
+            newDeductions.push({
+              product_code: productCode,
+              product_name: productName,
+              ingredient_code: rItem.ingredient_code,
+              ingredient_name: currentIng.name,
+              deducted_quantity: deduction,
+              unit: currentIng.unit,
+              type: orderReason,
+              business_name: shopSettings?.shop_name || "Rasel Food Ltd.",
+              user_id: user.id
+            });
+          }
+        }
+      }
+    };
+
     if (parsed.customer === "Self") {
       const newShelfItems: any[] = [];
       for (const item of parsed.items) {
         const matchedProduct = products.find(p => p.code === item.productCode);
         const expiryDays = matchedProduct?.shelf_life_days || 2;
         const expiryDate = new Date(now.getTime() + expiryDays * 24 * 60 * 60 * 1000);
-
-        // Stamp this batch with the exact current product cost (morning vs evening batch cost lock)
         const batchUnitCost = matchedProduct?.cost || 0;
 
         newShelfItems.push({
@@ -550,34 +602,12 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       const { error: shelfError } = await supabase.from("shelf_stock").insert(newShelfItems);
       if (shelfError) {
-          alert("SUPABASE REJECTED SHELF STOCK: " + shelfError.message);
-          return "ERROR";
+        alert("SUPABASE REJECTED SHELF STOCK: " + shelfError.message);
+        return "ERROR";
       }
 
       for (const item of parsed.items) {
-        const { data: recipeData } = await supabase.from("recipes").select("ingredient_code, quantity").eq("product_code", item.productCode).eq("user_id", user.id);
-        if (recipeData && recipeData.length > 0) {
-          for (const rItem of recipeData) {
-            const deduction = rItem.quantity * item.quantity;
-            const currentIng = ingredients.find((i) => i.code === rItem.ingredient_code);
-            if (currentIng) {
-              const remainingStock = Math.max(0, parseFloat((currentIng.stock - deduction).toFixed(3)));
-              setAllIngredients((prev) => prev.map((ing) => ing.code === rItem.ingredient_code ? { ...ing, stock: remainingStock } : ing));
-              dbPromises.push(supabase.from("ingredients").update({ stock: remainingStock }).eq("code", rItem.ingredient_code).eq("user_id", user.id));
-              newDeductions.push({
-                product_code: item.productCode, 
-                product_name: item.productName, 
-                ingredient_code: rItem.ingredient_code,
-                ingredient_name: currentIng.name, 
-                deducted_quantity: deduction, 
-                unit: currentIng.unit,
-                type: parsed.customer === "Self" ? "Self Order" : "Customer Order",
-                business_name: shopSettings?.shop_name || "Rasel Food Ltd.",
-                user_id: user.id
-              });
-            }
-          }
-        }
+        await deductRawIngredientsByRecipe(item.productCode, item.productName, item.quantity, "Self Order");
       }
       if (dbPromises.length > 0) await Promise.all(dbPromises);
       if (newDeductions.length > 0) await supabase.from("deductions").insert(newDeductions);
@@ -588,9 +618,12 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const firstLetter = activeBusinessName.charAt(0).toUpperCase();
     const dayOfMonth = now.getDate().toString().padStart(2, "0");
 
+    // Count UNIQUE Order IDs today so multi-product orders don't skip sequence numbers (#01, #02, #03)
     const todayStr = now.toDateString();
-    const todayOrdersCount = orders.filter((o) => new Date(o.date).toDateString() === todayStr).length;
-    const nextSeq = (todayOrdersCount + 1).toString().padStart(2, "0");
+    const uniqueTodayOrderIds = new Set(
+      orders.filter((o) => new Date(o.date).toDateString() === todayStr).map((o) => o.id)
+    );
+    const nextSeq = (uniqueTodayOrderIds.size + 1).toString().padStart(2, "0");
 
     const uniqueHash = Math.floor(10 + Math.random() * 90);
     const orderId = `${firstLetter}-${dayOfMonth}#${nextSeq}-${uniqueHash}`;
@@ -598,17 +631,19 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const isNew = (parsed.phone && !orders.some((o) => o.phone === parsed.phone)) ? 1 : 0;
 
     const actualOrderType = parsed.orderType || (parsed.isWalkIn ? "Walk-in" : "Online");
-    const status = actualOrderType === "Walk-in" ? "Completed" : "Pending";
+    // Rule: Order is Completed when Pending Due == 0 (or Walk-in)
+    const isFullyPaidAtBooking = actualOrderType === "Walk-in" || (parsed.pendingPayment !== undefined && parsed.pendingPayment <= 0);
+    const status: "Completed" | "Pending" = isFullyPaidAtBooking ? "Completed" : "Pending";
 
     const newOrders: Order[] = [];
-    let remainingAdvance = parsed.advancePaid;
+    let remainingAdvance = isFullyPaidAtBooking ? parsed.total : parsed.advancePaid;
     const finalDeliveryDate = standardizeDateString(parsed.deliveryDate);
 
     for (let i = 0; i < parsed.items.length; i++) {
       const item = parsed.items[i];
       const matchedProduct = products.find(p => p.code === item.productCode);
 
-      // BATCH PROFIT LOCK (FIFO): Deduct from shelf batches and use their exact locked batch cost
+      // 1. Check Display Shelf Stock first (FIFO)
       let totalBatchCost = 0;
       let qtyToDeduct = item.quantity;
       const availableBatches = shelfStock
@@ -626,10 +661,11 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         dbPromises.push(supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id));
       }
 
-      // If customer buys more than what's on the shelf, fall back to current catalog cost for the remainder
+      // 2. If not on shelf (qtyToDeduct > 0), use catalog recipe cost AND immediately deduct raw ingredients!
       if (qtyToDeduct > 0) {
         const fallbackUnitCost = matchedProduct?.cost || 0;
         totalBatchCost += qtyToDeduct * fallbackUnitCost;
+        await deductRawIngredientsByRecipe(item.productCode, item.productName, qtyToDeduct, "Customer Order");
       }
 
       const itemBaseTotal = item.quantity * item.unitPrice;
@@ -638,62 +674,164 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (i === 0) rowTotal += (parsed.deliveryCharge || 0) + (parsed.vatAmount || 0);
 
       let rowAdvance = 0;
-      if (actualOrderType === "Walk-in") rowAdvance = rowTotal;
-      else if (remainingAdvance >= rowTotal) { rowAdvance = rowTotal; remainingAdvance -= rowTotal; } 
-      else if (remainingAdvance > 0) { rowAdvance = remainingAdvance; remainingAdvance = 0; }
+      if (isFullyPaidAtBooking) {
+        rowAdvance = rowTotal;
+      } else if (remainingAdvance >= rowTotal) {
+        rowAdvance = rowTotal;
+        remainingAdvance -= rowTotal;
+      } else if (remainingAdvance > 0) {
+        rowAdvance = remainingAdvance;
+        remainingAdvance = 0;
+      }
 
-      const rowPending = actualOrderType === "Walk-in" ? 0 : Math.max(0, rowTotal - rowAdvance);
+      const rowPending = isFullyPaidAtBooking ? 0 : Math.max(0, rowTotal - rowAdvance);
       const rowProfit = itemBaseTotal - totalBatchCost;
 
       newOrders.push({
         id: orderId,
-        product_id: matchedProduct?.id || null,
-        date: now.toISOString(), time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        customer: parsed.customer, phone: parsed.phone, product_code: item.productCode, product_name: item.productName,
-        quantity: item.quantity, unit_price: item.unitPrice, 
+        product_id: matchedProduct?.id || undefined,
+        date: now.toISOString(),
+        time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        customer: parsed.customer,
+        phone: parsed.phone,
+        email: parsed.email || "",
+        product_code: item.productCode,
+        product_name: item.productName,
+        quantity: item.quantity,
+        unit_price: item.unitPrice, 
         total: parseFloat(rowTotal.toFixed(2)),
         advance_paid: parseFloat(rowAdvance.toFixed(2)),
         pending_payment: parseFloat(rowPending.toFixed(2)), 
         cost: parseFloat(totalBatchCost.toFixed(2)), 
         profit: parseFloat(rowProfit.toFixed(2)),
-        location: parsed.location, delivery_date: finalDeliveryDate, payment_method: parsed.paymentMethod, 
+        location: parsed.location,
+        delivery_date: finalDeliveryDate,
+        payment_method: parsed.paymentMethod, 
         status, 
         order_type: actualOrderType,
-        is_new_customer: isNew, user_id: user.id, is_deleted: false
+        is_new_customer: isNew,
+        user_id: user.id,
+        is_deleted: false
       } as Order);
     }
 
     setOrders((prev) => [...newOrders, ...prev]);
+
+    // Save to Supabase (fallback gracefully if `email` column wasn't added yet)
     const { error: orderError } = await supabase.from("orders").insert(newOrders);
     if (orderError) {
+      if (orderError.message && orderError.message.toLowerCase().includes("email")) {
+        const ordersWithoutEmail = newOrders.map(({ email, ...rest }) => rest);
+        const { error: retryErr } = await supabase.from("orders").insert(ordersWithoutEmail);
+        if (retryErr) alert("SUPABASE REJECTED THE ORDER: " + retryErr.message);
+      } else {
         alert("SUPABASE REJECTED THE ORDER: " + orderError.message);
+      }
     }
 
     if (dbPromises.length > 0) await Promise.all(dbPromises);
+    if (newDeductions.length > 0) await supabase.from("deductions").insert(newDeductions);
     return orderId;
   };
 
   const markOrderCompleted = async (orderId: string) => {
     const user = await getActiveUser();
     if (!user) return orderId;
-    setOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, status: "Completed" as const, advance_paid: o.total, pending_payment: 0 } : o));
-    await supabase.from("orders").update({ status: "Completed", advance_paid: orders.find(o => o.id === orderId)?.total, pending_payment: 0 }).eq("id", orderId).eq("user_id", user.id);
+
+    const matchingRows = orders.filter((o) => o.id === orderId);
+
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? { ...o, status: "Completed" as const, advance_paid: o.total, pending_payment: 0 }
+          : o
+      )
+    );
+
+    await Promise.all(
+      matchingRows.map((row) =>
+        supabase
+          .from("orders")
+          .update({
+            status: "Completed",
+            advance_paid: row.total,
+            pending_payment: 0
+          })
+          .eq("id", orderId)
+          .eq("product_code", row.product_code)
+          .eq("user_id", user.id)
+      )
+    );
+
     return orderId;
   };
 
   const customers = useMemo(() => {
-    const map: Record<string, CustomerSummary> = {};
-    orders.forEach((o) => {
-      const key = o.phone || o.customer;
-      if (!map[key]) map[key] = { name: o.customer, phone: o.phone, totalOrders: 0, totalSpent: 0, totalProfit: 0, lastOrderDate: o.date, favoriteProduct: o.product_name, avgOrderValue: 0, tier: "Regular", address: o.location };
-      map[key].totalOrders += 1;
-      map[key].totalSpent += o.total;
-      map[key].totalProfit += o.profit;
-      if (new Date(o.date) > new Date(map[key].lastOrderDate)) { map[key].lastOrderDate = o.date; map[key].address = o.location; }
+    const map: Record<string, CustomerSummary & { orderIds: Set<string>; productCounts: Record<string, number> }> = {};
+    let custCounter = 1;
+
+    const chronological = [...orders].reverse();
+
+    chronological.forEach((o) => {
+      if (!o.customer || o.customer.toLowerCase() === "self") return;
+      const key = (o.phone && o.phone !== "N/A") ? o.phone.trim() : o.customer.trim();
+
+      if (!map[key]) {
+        const custId = `CUST-${String(custCounter++).padStart(2, "0")}`;
+        map[key] = {
+          customer_id: custId,
+          name: o.customer,
+          phone: o.phone,
+          email: o.email || "",
+          totalOrders: 0,
+          totalSpent: 0,
+          totalPaid: 0,
+          totalDue: 0,
+          totalProfit: 0,
+          lastOrderDate: o.date,
+          favoriteProduct: o.product_name,
+          avgOrderValue: 0,
+          tier: "Regular",
+          address: o.location,
+          orderIds: new Set<string>(),
+          productCounts: {}
+        };
+      }
+
+      map[key].orderIds.add(o.id);
+      map[key].totalOrders = map[key].orderIds.size;
+      map[key].totalSpent += (o.total || 0);
+      map[key].totalPaid += (o.advance_paid || 0);
+      map[key].totalDue += (o.pending_payment || 0);
+      map[key].totalProfit += (o.profit || 0);
+      if (o.email && !map[key].email) map[key].email = o.email;
+
+      map[key].productCounts[o.product_name] = (map[key].productCounts[o.product_name] || 0) + (o.quantity || 0);
+
+      if (new Date(o.date) >= new Date(map[key].lastOrderDate)) {
+        map[key].lastOrderDate = o.date;
+        if (o.location) map[key].address = o.location;
+        if (o.email) map[key].email = o.email;
+      }
     });
-    return Object.values(map).map((c) => {
+
+    return Object.values(map).map(({ orderIds, productCounts, ...c }) => {
       const avg = c.totalOrders > 0 ? Math.round(c.totalSpent / c.totalOrders) : 0;
-      return { ...c, avgOrderValue: avg, tier: c.totalOrders >= 5 || c.totalSpent >= 5000 ? "Best" : c.totalOrders >= 2 || c.totalSpent >= 2000 ? "Medium" : "Regular" };
+      let favProd = c.favoriteProduct;
+      let maxProdQty = 0;
+      Object.entries(productCounts).forEach(([pName, qty]) => {
+        if (qty > maxProdQty) {
+          maxProdQty = qty;
+          favProd = pName;
+        }
+      });
+
+      return {
+        ...c,
+        favoriteProduct: favProd,
+        avgOrderValue: avg,
+        tier: c.totalOrders >= 5 || c.totalSpent >= 5000 ? "Best" : c.totalOrders >= 2 || c.totalSpent >= 2000 ? "Medium" : "Regular"
+      };
     });
   }, [orders]);
 
@@ -737,19 +875,32 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const pendingPaymentsAmount = activePendingOrders.reduce((sum, o) => sum + (o.pending_payment || 0), 0);
 
     const productSoldMap: Record<string, number> = {};
-    orders.forEach((o) => { productSoldMap[o.product_name] = (productSoldMap[o.product_name] || 0) + o.quantity; });
+    const productSoldByCode: Record<string, number> = {};
+    const monthlyProductSoldMap: Record<string, number> = {};
+
+    orders.forEach((o) => {
+      if (o.customer?.toLowerCase() === "self") return;
+      productSoldMap[o.product_name] = (productSoldMap[o.product_name] || 0) + o.quantity;
+      productSoldByCode[o.product_code] = (productSoldByCode[o.product_code] || 0) + o.quantity;
+
+      const d = getEffectiveDate(o);
+      if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+        monthlyProductSoldMap[o.product_name] = (monthlyProductSoldMap[o.product_name] || 0) + o.quantity;
+      }
+    });
 
     let bestSellingProduct = "N/A"; 
     let maxSold = 0; 
-    let lowSellingCount = 0;
     let highestMargin = -Infinity;
     let highestMarginProduct = "N/A";
 
     products.forEach((p) => { 
-      const sold = productSoldMap[p.name] || 0; 
-      if (sold > maxSold) { maxSold = sold; bestSellingProduct = `${p.name} (${sold} sold)`; } 
+      const totalSoldAllTime = productSoldMap[p.name] || 0;
 
-      if (sold > 0 && sold <= 3) lowSellingCount++; 
+      if (totalSoldAllTime > maxSold) { 
+        maxSold = totalSoldAllTime; 
+        bestSellingProduct = `${p.name} (${totalSoldAllTime} sold)`; 
+      } 
 
       if (p.price > 0) {
          const margin = ((p.price - (p.cost || 0)) / p.price) * 100;
@@ -760,29 +911,58 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
+    // Low-selling products (selling fewer than 3 units this month < 3)
+    const lowSellingProducts: string[] = [];
+    products.forEach((p) => { 
+      const sold = monthlyProductSoldMap[p.name] || productSoldByCode[p.code] || 0; 
+      if (sold < 3) {
+        lowSellingProducts.push(`${p.name} (${sold} sold)`);
+      }
+    });
+
+    // Calculate true Most Consumed Ingredient from recipes * units sold
+    const ingConsumedMap: Record<string, number> = {};
+    recipesList.forEach((r) => {
+      const totalProdSold = productSoldByCode[r.product_code] || 0;
+      if (totalProdSold > 0) {
+        ingConsumedMap[r.ingredient_code] = (ingConsumedMap[r.ingredient_code] || 0) + (r.quantity * totalProdSold);
+      }
+    });
+
+    let mostConsumedIngredient = ingredients[0]?.name ? `${ingredients[0].name}` : "N/A";
+    let maxConsumedQty = 0;
+    ingredients.forEach((ing) => {
+      const usedQty = ingConsumedMap[ing.code] || 0;
+      if (usedQty > maxConsumedQty) {
+        maxConsumedQty = usedQty;
+        mostConsumedIngredient = `${ing.name} (${parseFloat(usedQty.toFixed(2))} ${ing.unit})`;
+      }
+    });
+
     return {
       todaySales: parseFloat(todaySales.toFixed(2)), 
       todayProfit: parseFloat((todayBaseProfit - todayLoss).toFixed(2)), 
       todayOrdersCount: new Set(todayOrders.map(o => o.id)).size,
       upcomingDeliveriesCount: new Set(orders.filter((o) => { 
-          const d = new Date(getEffectiveDate(o)); d.setHours(0, 0, 0, 0); return d > todayMidnight; 
+        const d = new Date(getEffectiveDate(o)); d.setHours(0, 0, 0, 0); return d > todayMidnight; 
       }).map(o => o.id)).size, 
       deliveriesTodayCount: new Set(todayOrders.map(o => o.id)).size, 
       pendingPaymentsAmount: parseFloat(pendingPaymentsAmount.toFixed(2)), 
       pendingOrdersCount: new Set(pendingOrders.map(o => o.id)).size,
       monthlySales: parseFloat(monthlySales.toFixed(2)), 
       monthlyProfit: parseFloat((monthlyBaseProfit - monthlyLoss).toFixed(2)), 
-      monthlyOrdersCount: new Set(monthOrders.map(o => o.id)).size,
+      monthlyOrdersCount: new Set(monthOrders.map(o => { const d = getEffectiveDate(o); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; }).map(o => o.id)).size,
       monthlyLoss: parseFloat(monthlyLoss.toFixed(2)), 
       newCustomersThisMonth: new Set(monthOrders.filter((o) => o.is_new_customer === 1).map(o => o.phone)).size,
       newCustomersToday: new Set(orders.filter((o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1).map(o => o.phone)).size,
       lowStockCount: ingredients.filter((i) => i.stock <= i.minimum).length, 
-      lowSellingCount, 
+      lowSellingCount: lowSellingProducts.length, 
+      lowSellingProducts, 
       bestSellingProduct: maxSold > 0 ? bestSellingProduct : "None yet",
-      mostConsumedIngredient: ingredients[0]?.name ? `${ingredients[0].name}` : "N/A", 
+      mostConsumedIngredient, 
       highestProfitProduct: highestMarginProduct !== "N/A" ? highestMarginProduct : "N/A"
     };
-  }, [orders, ingredients, products, wasteLogs]);
+  }, [orders, ingredients, products, wasteLogs, recipesList]);
 
   const triggerDownload = (content: string, mimeType: string, filename: string) => {
     try {
@@ -799,6 +979,47 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.error("Download failed:", err);
       alert("Your browser blocked the download.");
     }
+  };
+
+  const buildGroupedOrdersForCSV = (rawOrderRows: any[]) => {
+    const map: Record<string, any> = {};
+    (rawOrderRows || []).forEach((o) => {
+      if ((o.customer || "").toLowerCase() === "self") return;
+      if (!map[o.id]) {
+        map[o.id] = {
+          id: o.id,
+          date: o.date,
+          customer: o.customer,
+          phone: o.phone || "",
+          email: o.email || "",
+          itemsList: [] as string[],
+          quantity: 0,
+          subtotal: 0,
+          total: 0,
+          advance_paid: 0,
+          pending_payment: 0,
+          payment_method: o.payment_method || "Cash",
+          cost: 0,
+          profit: 0,
+          status: o.status,
+          delivery_date: o.delivery_date
+        };
+      }
+      map[o.id].itemsList.push(`${o.quantity}x ${o.product_name}`);
+      map[o.id].quantity += Number(o.quantity || 0);
+      map[o.id].subtotal += Number(o.quantity || 0) * Number(o.unit_price || 0);
+      map[o.id].total += Number(o.total || 0);
+      map[o.id].advance_paid += Number(o.advance_paid || 0);
+      map[o.id].pending_payment += Number(o.pending_payment || 0);
+      map[o.id].cost += Number(o.cost || 0);
+      map[o.id].profit += Number(o.profit || 0);
+    });
+
+    return Object.values(map).map((g: any) => ({
+      ...g,
+      product_name: g.itemsList.join(" | "),
+      delivery_charge: Math.max(0, parseFloat((g.total - g.subtotal).toFixed(2)))
+    }));
   };
 
   const exportOrdersCSV = async () => {
@@ -835,6 +1056,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       const activeIngCodes = new Set((iData || []).map((i: any) => i.code));
       const activePurData = (purData || []).filter((p: any) => activeIngCodes.has(p.code));
+      const groupedOrdersForExport = buildGroupedOrdersForCSV(oData || []);
 
       let csvContent = `Daily Business Backup for Disaster Recovery\n`;
       csvContent += `Backup Date:,${localToday}\n`;
@@ -848,16 +1070,16 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           const rowData = keys.map(k => {
             const val = row[k];
             if (k.includes('date') || k === 'created_at') return `"${val ? new Date(val).toLocaleDateString() : ""}"`;
-            return `"${String(val || "").replace(/"/g, '""')}"`;
+            return `"${String(val ?? "").replace(/"/g, '""')}"`;
           });
           section += rowData.join(",") + "\n";
         });
         return section + "\n";
       };
 
-      csvContent += generateTableCSV("TODAY'S ORDERS", oData || [],
-        ["Order ID", "Date", "Customer", "Phone", "Product", "Qty", "Total (৳)", "Cost (৳)", "Profit (৳)", "Status", "Delivery Date"],
-        ["id", "date", "customer", "phone", "product_name", "quantity", "total", "cost", "profit", "status", "delivery_date"]
+      csvContent += generateTableCSV("TODAY'S ORDERS (1 ROW PER ORDER)", groupedOrdersForExport,
+        ["Order ID", "Date", "Customer", "Phone", "Email", "Products", "Total Qty", "Subtotal (৳)", "Delivery (৳)", "Grand Total (৳)", "Advance Paid (৳)", "Pending Due (৳)", "Payment Method", "Cost (৳)", "Profit (৳)", "Status", "Delivery Date"],
+        ["id", "date", "customer", "phone", "email", "product_name", "quantity", "subtotal", "delivery_charge", "total", "advance_paid", "pending_payment", "payment_method", "cost", "profit", "status", "delivery_date"]
       );
 
       csvContent += generateTableCSV("TODAY'S PURCHASES", activePurData,
@@ -937,6 +1159,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       const activeIngCodes = new Set((iData || []).map((i: any) => i.code));
       const activePurData = (purData || []).filter((p: any) => activeIngCodes.has(p.code));
+      const groupedOrdersForExport = buildGroupedOrdersForCSV(oData || []);
 
       let csvContent = `Monthly Business Backup for Disaster Recovery\n`;
       csvContent += `Billing Month:,${monthYear}\n`;
@@ -950,16 +1173,16 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           const rowData = keys.map(k => {
             const val = row[k];
             if (k.includes('date') || k === 'created_at') return `"${val ? new Date(val).toLocaleDateString() : ""}"`;
-            return `"${String(val || "").replace(/"/g, '""')}"`;
+            return `"${String(val ?? "").replace(/"/g, '""')}"`;
           });
           section += rowData.join(",") + "\n";
         });
         return section + "\n";
       };
 
-      csvContent += generateTableCSV("THIS MONTH'S ORDERS", oData || [],
-        ["Order ID", "Date", "Customer", "Phone", "Product", "Qty", "Total (৳)", "Cost (৳)", "Profit (৳)", "Status", "Delivery Date"],
-        ["id", "date", "customer", "phone", "product_name", "quantity", "total", "cost", "profit", "status", "delivery_date"]
+      csvContent += generateTableCSV("THIS MONTH'S ORDERS (1 ROW PER ORDER)", groupedOrdersForExport,
+        ["Order ID", "Date", "Customer", "Phone", "Email", "Products", "Total Qty", "Subtotal (৳)", "Delivery (৳)", "Grand Total (৳)", "Advance Paid (৳)", "Pending Due (৳)", "Payment Method", "Cost (৳)", "Profit (৳)", "Status", "Delivery Date"],
+        ["id", "date", "customer", "phone", "email", "product_name", "quantity", "subtotal", "delivery_charge", "total", "advance_paid", "pending_payment", "payment_method", "cost", "profit", "status", "delivery_date"]
       );
 
       csvContent += generateTableCSV("THIS MONTH'S PURCHASES", activePurData,

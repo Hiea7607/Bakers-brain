@@ -249,13 +249,20 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
 
   const handleCRMPhoneLookup = (inputPhone: string) => {
     if (!parsed) return;
-    const matchedCustomer = customers.find(c => c.phone === inputPhone && c.phone !== "N/A" && c.phone !== "");
-    setParsed(prev => prev ? { 
-      ...prev, 
-      phone: inputPhone, 
-      customer: matchedCustomer ? matchedCustomer.name : prev.customer, 
-      location: matchedCustomer ? matchedCustomer.address : prev.location 
-    } : prev);
+    const matchedCustomer = customers.find(
+      (c) => c.phone === inputPhone && c.phone !== "N/A" && c.phone !== ""
+    );
+    setParsed((prev) =>
+      prev
+        ? {
+            ...prev,
+            phone: inputPhone,
+            customer: matchedCustomer ? matchedCustomer.name : prev.customer,
+            location: matchedCustomer ? matchedCustomer.address : prev.location,
+            email: matchedCustomer && matchedCustomer.email ? matchedCustomer.email : prev.email
+          }
+        : prev
+    );
   };
 
   const updateCalculations = (updates: Partial<ParsedOrder & { discountAmount?: number }>) => {
@@ -655,7 +662,7 @@ export const QuickOrderView: React.FC<{ onOrderSaved: () => void, initialCart?: 
                       <span className="font-bold">{parsed.deliveryDate}</span>
                     </div>
 
-                    <div className="flex justify-between"><span className="font-medium">Payment:</span> <span className="font-bold">{parsed.paymentMethod}</span></div>
+                    <div className="flex justify-between"><span className="font-medium">Payment By:</span> <span className="font-bold">{parsed.paymentMethod}</span></div>
                   </div>
 
                   <div className="border-t-2 border-dashed border-gray-300 my-3 print:border-black"></div>

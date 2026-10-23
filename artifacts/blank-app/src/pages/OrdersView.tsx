@@ -203,6 +203,10 @@ export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ o
                         )}
                       </div>
                       <p className="text-xs text-gray-500 mt-0.5 font-medium">{group.phone || "No phone provided"}</p>
+                      <p className="text-xs text-gray-500 mt-0.5 font-medium">
+                        
+                        {group.email ? `  ✉️ ${group.email}` : ""}
+                      </p>
                     </div>
                     <div className="flex gap-2">
                       <span className="text-[10px] text-gray-400 font-mono bg-gray-100 px-2 py-1 rounded-md flex items-center">{group.time}</span>

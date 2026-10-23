@@ -168,7 +168,7 @@ export const InvoicesView: React.FC = () => {
                 <div className="flex justify-between"><span className="font-medium">Phone:</span> <span className="font-bold">{firstLine.phone || 'N/A'}</span></div>
                 <div className="flex justify-between"><span className="font-medium">Delivery Date:</span> <span className="font-bold">{formatToUniversalDate(firstLine.delivery_date)}</span></div>
                 <div className="flex justify-between"><span className="font-medium">Location:</span> <span className="font-bold text-right max-w-[150px] truncate">{firstLine.location}</span></div>
-                <div className="flex justify-between"><span className="font-medium">Payment:</span> <span className="font-bold">{firstLine.payment_method || 'Cash'}</span></div>
+                <div className="flex justify-between"><span className="font-medium">Payment By:</span> <span className="font-bold">{firstLine.payment_method || 'Cash'}</span></div>
               </div>
 
               <div className="border-t-2 border-dashed border-gray-300 my-3 print:border-black"></div>
@@ -223,7 +223,7 @@ export const InvoicesView: React.FC = () => {
                    {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} | {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                 </div>
                 <div className="text-[10px] text-gray-500 font-bold print:text-black">
-                   Powered by tongka
+                   Powered by Hiea Software Ltd.
                 </div>
                 <div className="text-xs font-semibold italic mt-2 text-black">
                    ✨ Thank you for treating yourself today!<br/>We hope to see you again soon.

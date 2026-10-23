@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useState } from "react";
 import { useBakery } from "../context/BakeryContext";
 
 export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = ({ onNavigate }) => {
   const { stats, customers, shopSettings } = useBakery();
   const CURRENCY = shopSettings?.currency_symbol || "৳";
+  const [showLowSellingDropdown, setShowLowSellingDropdown] = useState(false);
 
   const bestCustomer = customers.find((c) => c.tier === "Best") || customers[0];
 
@@ -121,15 +122,36 @@ export const DashboardView: React.FC<{ onNavigate: (page: string) => void }> = (
           </span>
         </div>
 
-        <div
-          onClick={() => onNavigate("products")}
-          className="flex justify-between items-center text-xs py-1.5 border-b border-gray-50 cursor-pointer hover:text-rose-600 transition"
-        >
-          <div className="flex items-center gap-2">
-            <span>📉</span>
-            <span className="text-gray-700 font-medium">Low-Selling Products</span>
+        {/* Low-Selling Products with Expandable Dropdown */}
+        <div className="border-b border-gray-50 pb-1.5">
+          <div
+            onClick={() => setShowLowSellingDropdown(!showLowSellingDropdown)}
+            className="flex justify-between items-center text-xs py-1.5 cursor-pointer hover:text-rose-600 transition"
+          >
+            <div className="flex items-center gap-2">
+              <span>📉</span>
+              <span className="text-gray-700 font-medium">Low-Selling Products</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-amber-600 font-bold text-xs">{stats.lowSellingCount || 0} items</span>
+              <span className="text-gray-400 text-[10px]">{showLowSellingDropdown ? "▲" : "▼"}</span>
+            </div>
           </div>
-          <span className="text-amber-600 font-bold text-xs">{stats.lowSellingCount || 0} items ›</span>
+
+          {showLowSellingDropdown && (
+            <div className="mt-2 bg-gray-50 rounded-xl p-2.5 text-[11px] space-y-1.5 border border-gray-200">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Sold &lt; 3 units this month:</p>
+              {stats.lowSellingProducts && stats.lowSellingProducts.length > 0 ? (
+                stats.lowSellingProducts.map((prodStr: string, idx: number) => (
+                  <div key={idx} className="flex justify-between items-center text-gray-800 bg-white px-2.5 py-1.5 rounded-lg border border-gray-100 shadow-xs">
+                    <span className="font-semibold">{prodStr}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-gray-400 italic text-center py-1">Great job! All active products have sold 3+ units this month.</p>
+              )}
+            </div>
+          )}
         </div>
 
         <div
