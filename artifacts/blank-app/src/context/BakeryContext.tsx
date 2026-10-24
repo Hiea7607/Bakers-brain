@@ -195,10 +195,9 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (setRes.data && setRes.data.length > 0) {
         setShopSettings({ ...setRes.data[0], business_name: officialBusinessName } as ShopSettings);
       } else {
+        // PERMANENT FIX: Do NOT try to insert to database on load. Avoids 400 Bad Request.
         const defaultSettings = { user_id: user.id, currency_symbol: '৳', default_tax_rate: 0, target_margin: 20, business_name: officialBusinessName, address: '', mobile_number: '' };
-        supabase.from("shop_settings").upsert([defaultSettings], { onConflict: 'user_id' }).select().limit(1).then(({ data: newSettings }) => {
-          if (newSettings && newSettings.length > 0) setShopSettings({ ...newSettings[0], business_name: officialBusinessName } as ShopSettings);
-        });
+        setShopSettings(defaultSettings as ShopSettings);
       }
 
       Promise.all([
@@ -226,6 +225,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, []);
 
+  // VERY IMPORTANT: useEffect must be placed AFTER fetchData is defined!
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const recalculateAffectedProducts = async (userId: string, ingCode: string, newIngUnitCost: number) => {
@@ -263,9 +263,18 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateShopSettings = async (updates: Partial<ShopSettings>) => {
     const user = await getActiveUser();
     if (!user) return;
-    const merged = { ...shopSettings, ...updates, user_id: user.id };
-    await supabase.from("shop_settings").upsert(merged, { onConflict: 'user_id' });
-    setShopSettings(prev => prev ? { ...prev, ...updates } : null);
+
+    // PERMANENT FIX: Manually check if it exists instead of upserting to bypass PostgREST cache errors
+    const { data: existing } = await supabase.from("shop_settings").select("id").eq("user_id", user.id).limit(1);
+
+    if (existing && existing.length > 0) {
+       await supabase.from("shop_settings").update(updates).eq("user_id", user.id);
+    } else {
+       const merged = { ...shopSettings, ...updates, user_id: user.id };
+       await supabase.from("shop_settings").insert([merged]);
+    }
+
+    setShopSettings(prev => prev ? { ...prev, ...updates } : { ...updates, user_id: user.id, currency_symbol: '৳', default_tax_rate: 0, target_margin: 20, business_name: '', address: '', mobile_number: '' });
   };
 
   const addProduct = async (product: any) => {
@@ -537,7 +546,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const newDeductions: any[] = [];
     const dbPromises: any[] = [];
 
-    // Track cumulative ingredient deductions across all items in this order
     const liveStockMap: Record<string, number> = {};
     ingredients.forEach(ing => { liveStockMap[ing.code] = ing.stock; });
 
@@ -620,7 +628,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const firstLetter = activeBusinessName.charAt(0).toUpperCase();
     const dayOfMonth = now.getDate().toString().padStart(2, "0");
 
-    // Count UNIQUE Order IDs today so multi-product orders don't skip sequence numbers (#01, #02, #03)
     const todayStr = now.toDateString();
     const uniqueTodayOrderIds = new Set(
       orders.filter((o) => new Date(o.date).toDateString() === todayStr).map((o) => o.id)
@@ -633,7 +640,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const isNew = (parsed.phone && !orders.some((o) => o.phone === parsed.phone)) ? 1 : 0;
 
     const actualOrderType = parsed.orderType || (parsed.isWalkIn ? "Walk-in" : "Online");
-    // Rule: Order is Completed when Pending Due == 0 (or Walk-in)
     const isFullyPaidAtBooking = actualOrderType === "Walk-in" || (parsed.pendingPayment !== undefined && parsed.pendingPayment <= 0);
     const status: "Completed" | "Pending" = isFullyPaidAtBooking ? "Completed" : "Pending";
 
@@ -645,7 +651,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const item = parsed.items[i];
       const matchedProduct = products.find(p => p.code === item.productCode);
 
-      // 1. ONLY Walk-in orders take from the Display Shelf
       let totalBatchCost = 0;
       let qtyToDeduct = item.quantity;
 
@@ -666,7 +671,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
 
-      // 2. If Online Order (or remaining Walk-in qty), deduct raw ingredients directly!
       if (qtyToDeduct > 0) {
         const fallbackUnitCost = matchedProduct?.cost || 0;
         totalBatchCost += qtyToDeduct * fallbackUnitCost;
@@ -677,10 +681,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
            actualOrderType === "Online" ? "Online Order (Kitchen)" : "Walk-in (Baked Fresh)"
         );
       }
-      
-      
-
-      
 
       const itemBaseTotal = item.quantity * item.unitPrice;
       let rowTotal = itemBaseTotal;
@@ -733,7 +733,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setOrders((prev) => [...newOrders, ...prev]);
 
-    // Save to Supabase (fallback gracefully if `email` column wasn't added yet)
     const { error: orderError } = await supabase.from("orders").insert(newOrders);
     if (orderError) {
       if (orderError.message && orderError.message.toLowerCase().includes("email")) {
@@ -798,7 +797,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           customer_id: custId,
           name: o.customer,
           phone: o.phone,
-          email: o.email || "",
+          email: o.customer_email || o.email || "", 
           totalOrders: 0,
           totalSpent: 0,
           totalPaid: 0,
@@ -820,14 +819,15 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       map[key].totalPaid += (o.advance_paid || 0);
       map[key].totalDue += (o.pending_payment || 0);
       map[key].totalProfit += (o.profit || 0);
-      if (o.email && !map[key].email) map[key].email = o.email;
+
+      const orderEmail = o.customer_email || o.email;
+      if (orderEmail && !map[key].email) map[key].email = orderEmail;
 
       map[key].productCounts[o.product_name] = (map[key].productCounts[o.product_name] || 0) + (o.quantity || 0);
 
       if (new Date(o.date) >= new Date(map[key].lastOrderDate)) {
         map[key].lastOrderDate = o.date;
         if (o.location) map[key].address = o.location;
-        if (o.email) map[key].email = o.email;
       }
     });
 
@@ -835,6 +835,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const avg = c.totalOrders > 0 ? Math.round(c.totalSpent / c.totalOrders) : 0;
       let favProd = c.favoriteProduct;
       let maxProdQty = 0;
+
       Object.entries(productCounts).forEach(([pName, qty]) => {
         if (qty > maxProdQty) {
           maxProdQty = qty;
@@ -912,12 +913,10 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     products.forEach((p) => { 
       const totalSoldAllTime = productSoldMap[p.name] || 0;
-
       if (totalSoldAllTime > maxSold) { 
         maxSold = totalSoldAllTime; 
         bestSellingProduct = `${p.name} (${totalSoldAllTime} sold)`; 
       } 
-
       if (p.price > 0) {
          const margin = ((p.price - (p.cost || 0)) / p.price) * 100;
          if (margin > highestMargin) {
@@ -927,7 +926,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
-    // Low-selling products (selling fewer than 3 units this month < 3)
     const lowSellingProducts: string[] = [];
     products.forEach((p) => { 
       const sold = monthlyProductSoldMap[p.name] || productSoldByCode[p.code] || 0; 
@@ -936,7 +934,6 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
-    // Calculate true Most Consumed Ingredient from recipes * units sold
     const ingConsumedMap: Record<string, number> = {};
     recipesList.forEach((r) => {
       const totalProdSold = productSoldByCode[r.product_code] || 0;
@@ -1001,13 +998,14 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const map: Record<string, any> = {};
     (rawOrderRows || []).forEach((o) => {
       if ((o.customer || "").toLowerCase() === "self") return;
+
       if (!map[o.id]) {
         map[o.id] = {
           id: o.id,
           date: o.date,
           customer: o.customer,
           phone: o.phone || "",
-          email: o.email || "",
+          email: o.customer_email || o.email || "",
           itemsList: [] as string[],
           quantity: 0,
           subtotal: 0,
@@ -1021,6 +1019,12 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           delivery_date: o.delivery_date
         };
       }
+
+      const rowEmail = o.customer_email || o.email;
+      if (rowEmail && !map[o.id].email) {
+        map[o.id].email = rowEmail;
+      }
+
       map[o.id].itemsList.push(`${o.quantity}x ${o.product_name}`);
       map[o.id].quantity += Number(o.quantity || 0);
       map[o.id].subtotal += Number(o.quantity || 0) * Number(o.unit_price || 0);

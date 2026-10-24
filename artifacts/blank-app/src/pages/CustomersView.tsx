@@ -33,7 +33,7 @@ export const CustomersView: React.FC = () => {
           name: o.customer, // Stores their most recent name
           phone: o.phone || "",
           location: o.location || "",
-          email: o.email || "", 
+          email: o.customer_email || o.email || "",
           totalSpent: 0,
           totalProfit: 0,
           orderIds: new Set(),
@@ -48,7 +48,8 @@ export const CustomersView: React.FC = () => {
         if (o.location && o.location !== "Display Shelf" && o.location !== "Direct Pickup") {
             profiles[key].location = o.location;
         }
-        if (o.email) profiles[key].email = o.email;
+        const latestEmail = o.customer_email || o.email;
+        if (latestEmail) profiles[key].email = latestEmail;
       }
 
       profiles[key].totalSpent += (o.total || 0);
