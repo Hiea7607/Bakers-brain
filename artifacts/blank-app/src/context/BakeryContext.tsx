@@ -645,30 +645,42 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const item = parsed.items[i];
       const matchedProduct = products.find(p => p.code === item.productCode);
 
-      // 1. Check Display Shelf Stock first (FIFO)
+      // 1. ONLY Walk-in orders take from the Display Shelf
       let totalBatchCost = 0;
       let qtyToDeduct = item.quantity;
-      const availableBatches = shelfStock
-        .filter(s => s.product_code === item.productCode && s.quantity > 0)
-        .sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime());
 
-      for (const batch of availableBatches) {
-        if (qtyToDeduct <= 0) break;
-        const deductAmount = Math.min(batch.quantity, qtyToDeduct);
-        qtyToDeduct -= deductAmount;
-        totalBatchCost += deductAmount * (batch.cost || 0);
+      if (actualOrderType === "Walk-in") {
+        const availableBatches = shelfStock
+          .filter(s => s.product_code === item.productCode && s.quantity > 0)
+          .sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime());
 
-        const newQty = batch.quantity - deductAmount;
-        setShelfStock(prev => prev.map(s => s.id === batch.id ? { ...s, quantity: newQty } : s));
-        dbPromises.push(supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id));
+        for (const batch of availableBatches) {
+          if (qtyToDeduct <= 0) break;
+          const deductAmount = Math.min(batch.quantity, qtyToDeduct);
+          qtyToDeduct -= deductAmount;
+          totalBatchCost += deductAmount * (batch.cost || 0);
+
+          const newQty = batch.quantity - deductAmount;
+          setShelfStock(prev => prev.map(s => s.id === batch.id ? { ...s, quantity: newQty } : s));
+          dbPromises.push(supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id));
+        }
       }
 
-      // 2. If not on shelf (qtyToDeduct > 0), use catalog recipe cost AND immediately deduct raw ingredients!
+      // 2. If Online Order (or remaining Walk-in qty), deduct raw ingredients directly!
       if (qtyToDeduct > 0) {
         const fallbackUnitCost = matchedProduct?.cost || 0;
         totalBatchCost += qtyToDeduct * fallbackUnitCost;
-        await deductRawIngredientsByRecipe(item.productCode, item.productName, qtyToDeduct, "Customer Order");
+        await deductRawIngredientsByRecipe(
+           item.productCode, 
+           item.productName, 
+           qtyToDeduct, 
+           actualOrderType === "Online" ? "Online Order (Kitchen)" : "Walk-in (Baked Fresh)"
+        );
       }
+      
+      
+
+      
 
       const itemBaseTotal = item.quantity * item.unitPrice;
       let rowTotal = itemBaseTotal;
