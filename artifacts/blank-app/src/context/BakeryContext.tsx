@@ -23,6 +23,8 @@ export type Purchase = {
 export type Order = {
   id: string; product_id?: string; date: string; time: string; customer: string; phone: string;
   email?: string;
+  customer_email?: string;
+  delivery_charge?: number;
   product_code: string; product_name: string; quantity: number; unit_price: number;
   total: number; advance_paid: number; pending_payment: number; cost: number;
   profit: number; location: string; delivery_date: string; payment_method: string;
@@ -695,6 +697,8 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         customer: parsed.customer,
         phone: parsed.phone,
         email: parsed.email || "",
+        customer_email: i === 0 ? (parsed.email || "") : "",
+        delivery_charge: i === 0 ? (parsed.deliveryCharge || 0) : 0,
         product_code: item.productCode,
         product_name: item.productName,
         quantity: item.quantity,
