@@ -5,7 +5,6 @@ import { formatToUniversalDate } from "./lib/dateUtils";
 import { supabase } from "./lib/supabaseClient";
 
 // --- PROGRESSIVE (LAZY) PAGE DOWNLOADS ---
-// Each screen is only downloaded when the user actually opens it
 const DashboardView = lazy(() => import("./pages/DashboardView").then(m => ({ default: m.DashboardView })));
 const QuickOrderView = lazy(() => import("./pages/QuickOrderView").then(m => ({ default: m.QuickOrderView })));
 const OrdersView = lazy(() => import("./pages/OrdersView").then(m => ({ default: m.OrdersView })));
@@ -17,10 +16,9 @@ const InvoicesView = lazy(() => import("./pages/InvoicesView").then(m => ({ defa
 const CustomersView = lazy(() => import("./pages/CustomersView").then(m => ({ default: m.CustomersView })));
 const AdminPortalView = lazy(() => import("./AdminPortalView").then(m => ({ default: m.AdminPortalView })));
 const ClientLockoutView = lazy(() => import("./ClientLockoutView").then(m => ({ default: m.ClientLockoutView })));
+// ✅ NEW: Added the Reset Password View import
+const ResetPasswordView = lazy(() => import("./pages/ResetPasswordView").then(m => ({ default: m.ResetPasswordView })));
 
-
-
-// Lightweight loading UI shown for a split-second when downloading a tab for the first time
 function PageLoader() {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-gray-400">
@@ -30,7 +28,6 @@ function PageLoader() {
   );
 }
 
-// Configured QueryClient to cache downloaded data for 5 minutes
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -44,8 +41,32 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem("bb_auth") === "true");
   const [userRole, setUserRole] = useState(() => localStorage.getItem("bb_role") || "business");
 
+  // ✅ NEW: State to track if the user clicked an email recovery link
+  const [isRecovering, setIsRecovering] = useState(false);
+
   const lockoutReason = localStorage.getItem("bb_lockout_reason") as "locked" | "expired" | null;
   const businessName = localStorage.getItem("bb_business_name") || "Business Account";
+
+  // ✅ BULLETPROOF LISTENER: Checks the URL directly AND listens to Supabase
+  useEffect(() => {
+    // 1. Force check the URL: If the link contains a recovery token, open the reset screen
+    if (window.location.hash.includes("type=recovery")) {
+      setIsRecovering(true);
+      // Clean up the URL so if they refresh, they don't get stuck on the reset screen
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+
+    // 2. Supabase event listener (as a backup)
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setIsRecovering(true);
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   const handleLogin = (role: string) => {
     setIsAuthenticated(true);
@@ -53,22 +74,20 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    // 1. Log out of the database
     await supabase.auth.signOut();
-
-    // 2. Completely destroy ALL offline storage, not just the login tokens
     localStorage.clear(); 
-
-    // 3. Update the auth state
     setIsAuthenticated(false);
-
-    // 4. Force the browser to refresh, wiping React's memory clean!
     window.location.reload(); 
   };
 
   return (
     <QueryClientProvider client={queryClient}>
-      {!isAuthenticated ? (
+      {/* ✅ NEW: If recovering, intercept the screen and show the Reset Password view */}
+      {isRecovering ? (
+        <Suspense fallback={<PageLoader />}>
+          <ResetPasswordView onComplete={() => setIsRecovering(false)} />
+        </Suspense>
+      ) : !isAuthenticated ? (
         <LandingGateway onLogin={handleLogin} />
       ) : lockoutReason ? (
         <Suspense fallback={<PageLoader />}>
@@ -83,7 +102,6 @@ export default function App() {
           <AdminPortalView onLogout={handleLogout} />
         </Suspense>
       ) : (
-        /* ✅ BAKERY PROVIDER IS MOVED HERE: Now it only fetches AFTER you log in! */
         <BakeryProvider>
           <BakersBrainApp userRole={userRole} onLogout={handleLogout} />
         </BakeryProvider>
@@ -109,13 +127,31 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
     }
   }, []);
 
+  // ✅ NEW: Function to send the password reset email
+  const handleForgotPassword = async () => {
+    if (!email) {
+      return setError("Please enter your email address in the box first.");
+    }
+    setLoading(true);
+    setError("");
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin, 
+    });
+    setLoading(false);
+
+    if (resetError) {
+      setError(`Error: ${resetError.message}`);
+    } else {
+      alert("Password reset link sent! Please check your email.");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      // 1. Authenticate the user's password
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -123,7 +159,6 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
 
       if (authError) throw authError;
 
-      // 2. Fetch the roster WITHOUT .single() to prevent the 406 crash
       const { data: rosterRows, error: rosterError } = await supabase
         .from('client_roster')
         .select('role, owner_name, is_locked, expiry_date, business_name')
@@ -135,8 +170,6 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
       }
 
       const requestedPortal = activeTab.toLowerCase(); 
-
-      // 3. Find the exact row that matches the portal tab they clicked
       const rosterData = rosterRows.find((row) => row.role === requestedPortal);
 
       if (!rosterData) {
@@ -144,7 +177,6 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
         throw new Error(`Unauthorized. Please use the correct portal.`);
       }
 
-      // 4. Set Admin Session
       if (rosterData.role === 'admin') {
         localStorage.setItem("lastAdminSession", JSON.stringify({
           name: rosterData.owner_name || "Md Golam Rabbany",
@@ -152,11 +184,9 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
         }));
       }
 
-      // 5. Set Business Session & check lockouts
       if (rosterData.role === 'business') {
         const isLocked = rosterData.is_locked;
         const isExpired = rosterData.expiry_date ? new Date(rosterData.expiry_date) < new Date() : false;
-
         localStorage.setItem("bb_business_name", rosterData.business_name || "Business Account");
 
         if (isLocked || isExpired) {
@@ -166,7 +196,6 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
         }
       }
 
-      // 6. Save universal auth state
       localStorage.setItem("bb_auth", "true");
       localStorage.setItem("bb_role", rosterData.role);
       localStorage.setItem("bb_user_email", email);
@@ -228,7 +257,6 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter password..."
                 className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono"
-                required
               />
               <div className="flex items-center mt-2">
                 <input
@@ -244,12 +272,23 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
               </div>
             </div>
             {error && <p className="text-xs font-bold text-red-500">{error}</p>}
+
             <button
               type="submit"
               disabled={loading}
               className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-lg text-sm shadow-md transition active:scale-95 disabled:opacity-50 mt-2"
             >
               {loading ? "Authenticating..." : "Unlock Dashboard →"}
+            </button>
+
+            {/* ✅ NEW: Forgot Password Button */}
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              disabled={loading}
+              className="w-full text-xs font-bold text-rose-600 hover:text-rose-800 mt-3 text-center transition disabled:opacity-50"
+            >
+              Forgot Password?
             </button>
           </form>
         </div>
@@ -258,6 +297,7 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
   );
 }
 
+// ... Keep your existing BakersBrainApp function below this line completely unchanged!
 function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: () => void }) {
   const [currentPage, setCurrentPage] = useState(() => localStorage.getItem("bb_current_page") || "dashboard");
   const [showDrawer, setShowDrawer] = useState(false);
@@ -301,56 +341,32 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col justify-between shadow-2xl relative pb-20 font-sans">
-
-      {/* Properly Wrapped Sticky Header */}
       <header className="bg-rose-600 text-white p-3 sticky top-0 z-30 shadow-md">
         <div className="flex items-center justify-between gap-2">
-
-          {/* Left Side: Hamburger Menu Only */}
           <div className="flex items-center flex-shrink-0">
-            <button
-              onClick={() => setShowDrawer(true)}
-              className="p-1.5 hover:bg-rose-700 rounded-lg transition text-white"
-              title="Open Menu"
-            >
+            <button onClick={() => setShowDrawer(true)} className="p-1.5 hover:bg-rose-700 rounded-lg transition text-white" title="Open Menu">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
           </div>
-
-          {/* Right Side: Full Badges & Account Info */}
           <div className="flex items-center gap-2">
-
-            {/* Badges with full text */}
             <div className="flex items-center gap-1.5">
               {issueProductsCount > 0 && (
-                <span
-                  onClick={() => setCurrentPage("products")}
-                  className="cursor-pointer bg-yellow-400 text-yellow-950 font-extrabold text-[11px] px-2 py-0.5 rounded-full shadow-sm hover:bg-yellow-500 transition whitespace-nowrap"
-                  title="Products below target margin"
-                >
+                <span onClick={() => setCurrentPage("products")} className="cursor-pointer bg-yellow-400 text-yellow-950 font-extrabold text-[11px] px-2 py-0.5 rounded-full shadow-sm hover:bg-yellow-500 transition whitespace-nowrap" title="Products below target margin">
                   🚨 {issueProductsCount} Margins
                 </span>
               )}
-
               {stats.lowStockCount > 0 && (
-                <span
-                  onClick={() => setCurrentPage("inventory")}
-                  className="cursor-pointer bg-yellow-400 text-yellow-950 font-extrabold text-[11px] px-2 py-0.5 rounded-full shadow-sm hover:bg-yellow-500 transition whitespace-nowrap"
-                  title="Low Stock Alert"
-                >
+                <span onClick={() => setCurrentPage("inventory")} className="cursor-pointer bg-yellow-400 text-yellow-950 font-extrabold text-[11px] px-2 py-0.5 rounded-full shadow-sm hover:bg-yellow-500 transition whitespace-nowrap" title="Low Stock Alert">
                   ⬇️ {stats.lowStockCount} Low
                 </span>
               )}
             </div>
-
-            {/* Tenant Identity Display */}
             <div className="text-right border-l border-rose-500 pl-2">
               <div className="text-xs font-extrabold leading-tight truncate max-w-[140px]">{businessName}</div>
               <div className="text-[11px] text-rose-100 font-medium truncate max-w-[140px]">{userEmail}</div>
             </div>
-
           </div>
         </div>
       </header>
@@ -368,12 +384,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                     <p className="text-xs text-gray-500 capitalize">{userRole} Portal</p>
                   </div>
                 </div>
-                <button
-                  onClick={() => setShowDrawer(false)}
-                  className="text-gray-400 hover:text-gray-600 text-xl font-bold"
-                >
-                  ✕
-                </button>
+                <button onClick={() => setShowDrawer(false)} className="text-gray-400 hover:text-gray-600 text-xl font-bold">✕</button>
               </div>
 
               <nav className="mt-4 space-y-1">
@@ -388,68 +399,30 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
                 ].map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => {
-                      setCurrentPage(item.id);
-                      setShowDrawer(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-                      currentPage === item.id
-                        ? "bg-rose-50 text-rose-600 font-bold"
-                        : "text-gray-700 hover:bg-gray-100"
-                    }`}
+                    onClick={() => { setCurrentPage(item.id); setShowDrawer(false); }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${currentPage === item.id ? "bg-rose-50 text-rose-600 font-bold" : "text-gray-700 hover:bg-gray-100"}`}
                   >
-                    <span>{item.icon}</span>
-                    {item.label}
+                    <span>{item.icon}</span> {item.label}
                   </button>
                 ))}
               </nav>
 
               <div className="mt-6 pt-4 border-t space-y-2">
                 <p className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest px-3 mb-2">Data & Backup</p>
-
-                <button
-                  onClick={() => {
-                    exportOrdersCSV();
-                    setShowDrawer(false);
-                  }}
-                  className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium"
-                >
-                  📄 Daily Data (CSV)
-                </button>
-
-                <button
-                  onClick={() => {
-                    exportMonthlyCSV();
-                    setShowDrawer(false);
-                  }}
-                  className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium"
-                >
-                  🗓️ Monthly Data (CSV)
-                </button>
-
-                <button
-                  onClick={handleSendDailySummary}
-                  className="w-full text-left text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition"
-                >
-                  ✉️ Daily Summary
-                </button>
+                <button onClick={() => { exportOrdersCSV(); setShowDrawer(false); }} className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium">📄 Daily Data (CSV)</button>
+                <button onClick={() => { exportMonthlyCSV(); setShowDrawer(false); }} className="w-full text-left text-xs text-gray-600 hover:bg-gray-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition font-medium">🗓️ Monthly Data (CSV)</button>
+                <button onClick={handleSendDailySummary} className="w-full text-left text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-2.5 rounded-lg flex items-center gap-2 transition">✉️ Daily Summary</button>
               </div>
             </div>
 
             <div className="pt-4 border-t space-y-3">
-              <button
-                onClick={onLogout}
-                className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs py-2.5 rounded-lg transition text-center"
-              >
-                🚪 Secure Logout
-              </button>
+              <button onClick={onLogout} className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs py-2.5 rounded-lg transition text-center">🚪 Secure Logout</button>
               <div className="text-center text-xs text-gray-400">Online First • V1.0.0</div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Main Content wrapped in Suspense for progressive tab loading */}
       <main className="flex-1 p-4 pt-5 overflow-y-auto">
         <Suspense fallback={<PageLoader />}>
           {currentPage === "dashboard" && <DashboardView onNavigate={setCurrentPage} />}
@@ -461,65 +434,26 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
           {currentPage === "inventory" && <InventoryView />}
           {currentPage === "reports" && <ReportsView onNavigate={setCurrentPage} />}
           {currentPage.startsWith("recipe-") && (
-            <RecipeBuilderView
-              productCode={currentPage.replace("recipe-", "")}
-              onBack={() => setCurrentPage("products")}
-            />
+            <RecipeBuilderView productCode={currentPage.replace("recipe-", "")} onBack={() => setCurrentPage("products")} />
           )}
         </Suspense>
       </main>
 
-      
-
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t border-gray-200 px-4 py-2 flex justify-between items-center z-40 shadow-lg">
-        <button
-          onClick={() => setCurrentPage("dashboard")}
-          className={`flex flex-col items-center gap-1 transition ${
-            currentPage === "dashboard" ? "text-rose-600 font-bold" : "text-gray-400"
-          }`}
-        >
-          <span className="text-lg">🏠</span>
-          <span className="text-[10px]">Dashboard</span>
+        <button onClick={() => setCurrentPage("dashboard")} className={`flex flex-col items-center gap-1 transition ${currentPage === "dashboard" ? "text-rose-600 font-bold" : "text-gray-400"}`}>
+          <span className="text-lg">🏠</span><span className="text-[10px]">Dashboard</span>
         </button>
-
-        <button
-          onClick={() => setCurrentPage("orders")}
-          className={`flex flex-col items-center gap-1 transition ${
-            currentPage === "orders" ? "text-rose-600 font-bold" : "text-gray-400"
-          }`}
-        >
-          <span className="text-lg">📋</span>
-          <span className="text-[10px]">Orders</span>
+        <button onClick={() => setCurrentPage("orders")} className={`flex flex-col items-center gap-1 transition ${currentPage === "orders" ? "text-rose-600 font-bold" : "text-gray-400"}`}>
+          <span className="text-lg">📋</span><span className="text-[10px]">Orders</span>
         </button>
-
-        <button
-          onClick={() => setCurrentPage("neworder")}
-          className="bg-rose-600 hover:bg-rose-700 text-white w-12 h-12 rounded-full flex items-center justify-center -mt-6 shadow-lg border-4 border-white transition transform active:scale-95"
-          title="New Order"
-        >
+        <button onClick={() => setCurrentPage("neworder")} className="bg-rose-600 hover:bg-rose-700 text-white w-12 h-12 rounded-full flex items-center justify-center -mt-6 shadow-lg border-4 border-white transition transform active:scale-95" title="New Order">
           <span className="text-2xl font-bold">+</span>
         </button>
-
-        <button
-          onClick={() => setCurrentPage("products")}
-          className={`flex flex-col items-center gap-1 transition ${
-            currentPage === "products" || currentPage.startsWith("recipe-")
-              ? "text-rose-600 font-bold"
-              : "text-gray-400"
-          }`}
-        >
-          <span className="text-lg">🍽️</span>
-          <span className="text-[10px]">Products</span>
+        <button onClick={() => setCurrentPage("products")} className={`flex flex-col items-center gap-1 transition ${currentPage === "products" || currentPage.startsWith("recipe-") ? "text-rose-600 font-bold" : "text-gray-400"}`}>
+          <span className="text-lg">🍽️</span><span className="text-[10px]">Products</span>
         </button>
-
-        <button
-          onClick={() => setCurrentPage("reports")}
-          className={`flex flex-col items-center gap-1 transition ${
-            currentPage === "reports" ? "text-rose-600 font-bold" : "text-gray-400"
-          }`}
-        >
-          <span className="text-lg">📊</span>
-          <span className="text-[10px]">Reports</span>
+        <button onClick={() => setCurrentPage("reports")} className={`flex flex-col items-center gap-1 transition ${currentPage === "reports" ? "text-rose-600 font-bold" : "text-gray-400"}`}>
+          <span className="text-lg">📊</span><span className="text-[10px]">Reports</span>
         </button>
       </nav>
     </div>

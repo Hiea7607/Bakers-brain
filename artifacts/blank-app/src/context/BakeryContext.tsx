@@ -65,7 +65,7 @@ export type WasteLog = {
 
 export type ShopSettings = {
   id?: string; user_id?: string; currency_symbol: string; default_tax_rate: number;
-  target_margin: number; shop_name: string; shop_address: string; shop_phone: string;
+  target_margin: number; business_name: string; address: string; mobile_number: string;
 };
 
 interface BakeryContextType {
@@ -191,11 +191,11 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const officialBusinessName = rosterRes.data && rosterRes.data.length > 0 ? rosterRes.data[0].business_name : "Rasel Food Ltd.";
 
       if (setRes.data && setRes.data.length > 0) {
-        setShopSettings({ ...setRes.data[0], shop_name: officialBusinessName } as ShopSettings);
+        setShopSettings({ ...setRes.data[0], business_name: officialBusinessName } as ShopSettings);
       } else {
-        const defaultSettings = { user_id: user.id, currency_symbol: '৳', default_tax_rate: 0, target_margin: 20, shop_name: officialBusinessName, shop_address: '', shop_phone: '' };
+        const defaultSettings = { user_id: user.id, currency_symbol: '৳', default_tax_rate: 0, target_margin: 20, business_name: officialBusinessName, address: '', mobile_number: '' };
         supabase.from("shop_settings").upsert([defaultSettings], { onConflict: 'user_id' }).select().limit(1).then(({ data: newSettings }) => {
-          if (newSettings && newSettings.length > 0) setShopSettings({ ...newSettings[0], shop_name: officialBusinessName } as ShopSettings);
+          if (newSettings && newSettings.length > 0) setShopSettings({ ...newSettings[0], business_name: officialBusinessName } as ShopSettings);
         });
       }
 
@@ -360,7 +360,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       deducted_quantity: quantity,
       unit: currentItem.unit,
       type: reason || "Manual Deduction",
-      business_name: shopSettings?.shop_name || "Rasel Food Ltd.",
+      business_name: shopSettings?.business_name || "Rasel Food Ltd.",
       user_id: user.id
     };
     await supabase.from("deductions").insert([newDeduction]);
@@ -570,7 +570,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               deducted_quantity: deduction,
               unit: currentIng.unit,
               type: orderReason,
-              business_name: shopSettings?.shop_name || "Rasel Food Ltd.",
+              business_name: shopSettings?.business_name || "Rasel Food Ltd.",
               user_id: user.id
             });
           }
@@ -614,7 +614,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return "SHELF-STOCKED";
     }
 
-    const activeBusinessName = shopSettings?.shop_name || "Rasel Food Ltd.";
+    const activeBusinessName = shopSettings?.business_name || "Rasel Food Ltd.";
     const firstLetter = activeBusinessName.charAt(0).toUpperCase();
     const dayOfMonth = now.getDate().toString().padStart(2, "0");
 
@@ -1060,7 +1060,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       let csvContent = `Daily Business Backup for Disaster Recovery\n`;
       csvContent += `Backup Date:,${localToday}\n`;
-      csvContent += `Business:,${shopSettings?.shop_name || "Rasel Food Ltd."}\n\n`;
+      csvContent += `Business:,${shopSettings?.business_name || "Rasel Food Ltd."}\n\n`;
 
       const generateTableCSV = (title: string, data: any[], headers: string[], keys: string[]) => {
         if (!data || data.length === 0) return `--- ${title} ---\nNo data recorded today.\n\n`;
@@ -1163,7 +1163,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       let csvContent = `Monthly Business Backup for Disaster Recovery\n`;
       csvContent += `Billing Month:,${monthYear}\n`;
-      csvContent += `Business:,${shopSettings?.shop_name || "Rasel Food Ltd."}\n\n`;
+      csvContent += `Business:,${shopSettings?.business_name || "Rasel Food Ltd."}\n\n`;
 
       const generateTableCSV = (title: string, data: any[], headers: string[], keys: string[]) => {
         if (!data || data.length === 0) return `--- ${title} ---\nNo data recorded this month.\n\n`;

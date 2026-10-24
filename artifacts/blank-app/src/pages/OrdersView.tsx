@@ -5,7 +5,7 @@ import { useBakery } from "../context/BakeryContext";
 export const OrdersView: React.FC<{ onNavigate: (page: string) => void }> = ({ onNavigate }) => {
   const { orders, markOrderCompleted, deleteOrder, shopSettings } = useBakery();
   const CURRENCY = shopSettings?.currency_symbol || "৳";
-  const businessName = localStorage.getItem("bb_business_name") || shopSettings?.shop_name || "MY BAKERY";
+  const businessName = localStorage.getItem("bb_business_name") || shopSettings?.business_name || "MY BAKERY";
 
   const [activeTab, setActiveTab] = useState<"Pending" | "Upcoming" | "Completed" | "All">("Pending");
   const [orderToPrint, setOrderToPrint] = useState<any>(null);

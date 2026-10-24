@@ -5,7 +5,7 @@ import { formatToUniversalDate } from "../lib/dateUtils";
 export const InvoicesView: React.FC = () => {
   const { orders, shopSettings, markOrderCompleted, deleteOrder } = useBakery();
   const CURRENCY = shopSettings?.currency_symbol || "৳";
-  const businessName = localStorage.getItem("bb_business_name") || shopSettings?.shop_name || "MY BAKERY";
+  const businessName = localStorage.getItem("bb_business_name") || "MY BAKERY";shopSettings?.business_name;
   const businessEmail = localStorage.getItem("bb_user_email") || "";
 
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -145,11 +145,11 @@ export const InvoicesView: React.FC = () => {
 
               <div className="text-center space-y-1">
                 <h2 className="font-black text-2xl uppercase tracking-widest text-black">{businessName}</h2>
-                {(shopSettings?.shop_address || shopSettings?.shop_phone || businessEmail) && (
+                {(shopSettings?.address || shopSettings?.mobile_number || businessEmail) && (
                   <div className="text-[11px] text-gray-600 print:text-black mt-1">
-                     {shopSettings?.shop_address && <p>{shopSettings.shop_address}</p>}
+                     {shopSettings?.address && <p>{shopSettings.address}</p>}
                      <p>
-                       {shopSettings?.shop_phone && <span>📞 {shopSettings.shop_phone}</span>}
+                       {shopSettings?.mobile_number && <span>📞 {shopSettings.mobile_number}</span>}
                        {businessEmail && <span> | ✉️ {businessEmail}</span>}
                      </p>
                   </div>
