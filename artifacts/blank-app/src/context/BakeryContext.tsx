@@ -967,7 +967,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       pendingOrdersCount: new Set(pendingOrders.map(o => o.id)).size,
       monthlySales: parseFloat(monthlySales.toFixed(2)), 
       monthlyProfit: parseFloat((monthlyBaseProfit - monthlyLoss).toFixed(2)), 
-      monthlyOrdersCount: new Set(monthOrders.map(o => { const d = getEffectiveDate(o); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; }).map(o => o.id)).size,
+      monthlyOrdersCount: new Set(monthOrders.map(o => o.id)).size,
       monthlyLoss: parseFloat(monthlyLoss.toFixed(2)), 
       newCustomersThisMonth: new Set(monthOrders.filter((o) => o.is_new_customer === 1).map(o => o.phone)).size,
       newCustomersToday: new Set(orders.filter((o) => new Date(o.date).toDateString() === todayStr && o.is_new_customer === 1).map(o => o.phone)).size,
