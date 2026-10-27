@@ -1,11 +1,10 @@
 # Business Brain
 
-Business Brain is a multi-tenant SaaS application for food business owners in Bangladesh, India, Sri Lanka, Nepal, and similar developing countries.
+Business Brain is a multi-tenant SaaS application for food business owners in Bangladesh.
 
 ## Live Demo
 - **URL:** https://businessbrain-api-server.vercel.app/
-- **Demo Email:** b5@bakery.com
-- **Demo Password:** test@123
+- **Demo Access:** Please register a secure test account on the login page to evaluate the application.
 
 ## Prerequisites
 - Node.js (v18 or higher)
@@ -15,8 +14,8 @@ Business Brain is a multi-tenant SaaS application for food business owners in Ba
 
 1. **Database Setup**
    - Create a Supabase PostgreSQL database.
-   - Run the `database/schema.sql` script in your SQL Editor to create tables.
-   - Run the `database/seed.sql` script to insert test data.
+   - Run the `database/schema.sql` script in your SQL Editor to create tables and enable Row Level Security (RLS).
+   - Run the `database/seed.sql` script to insert fictional test data.
 
 2. **Environment Configuration**
    - Copy `.env.example` and rename it to `.env`.
@@ -25,4 +24,4 @@ Business Brain is a multi-tenant SaaS application for food business owners in Ba
 3. **Install Dependencies**
    Run the following command to install all packages:
    ```bash
-   pnpm install --no-frozen-lockfile
+   pnpm install --frozen-lockfile
