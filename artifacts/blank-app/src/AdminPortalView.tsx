@@ -21,13 +21,32 @@ export function AdminPortalView({ onLogout }: { onLogout: () => void }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [lastAdminSession, setLastAdminSession] = useState<{ name: string; date: string } | null>(null);
 
+  // NEW: State to prevent the UI from flashing before we verify the admin
+  const [isAuthorized, setIsAuthorized] = useState(false);
+
   useEffect(() => {
-    fetchClients();
-    const savedSession = localStorage.getItem("lastAdminSession");
-    if (savedSession) {
-      setLastAdminSession(JSON.parse(savedSession));
-    }
-  }, []);
+    // NEW: The Gatekeeper Function
+    const verifyAdmin = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      // If no user is logged in, or they are not the true admin, kick them out instantly
+      if (!user || user.email !== 'curiazy@gmail.com') {
+        onLogout(); 
+        return; 
+      }
+
+      // If they pass the check, allow the UI to render and fetch data
+      setIsAuthorized(true);
+      fetchClients();
+
+      const savedSession = localStorage.getItem("lastAdminSession");
+      if (savedSession) {
+        setLastAdminSession(JSON.parse(savedSession));
+      }
+    };
+
+    verifyAdmin();
+  }, []); // Only run once on mount
 
   const fetchClients = async () => {
     setLoading(true);
@@ -63,7 +82,6 @@ export function AdminPortalView({ onLogout }: { onLogout: () => void }) {
     }
   };
 
-  // Toggle Kill Switch / Lock Status using user_id
   const toggleLockStatus = async (userId: string, currentStatus: boolean) => {
     const { error } = await supabase
       .from("client_roster")
@@ -82,6 +100,15 @@ export function AdminPortalView({ onLogout }: { onLogout: () => void }) {
     c.owner_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // NEW: Block the screen from rendering until Supabase confirms the email
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-500 font-bold">Verifying Secure Connection...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto min-h-screen bg-gray-50 p-6 font-sans">

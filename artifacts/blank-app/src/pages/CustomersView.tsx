@@ -6,7 +6,7 @@ export const CustomersView: React.FC = () => {
   const { orders, shopSettings } = useBakery();
   const CURRENCY = shopSettings?.currency_symbol || "৳";
   const businessName = localStorage.getItem("bb_business_name") || shopSettings?.business_name || "MY BAKERY";
-  const businessEmail = localStorage.getItem("bb_user_email") || "";
+  const businessEmail = localStorage.getItem("supabase.auth.getUser()") || "";
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);

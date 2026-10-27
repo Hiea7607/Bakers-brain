@@ -6,7 +6,7 @@ export const InvoicesView: React.FC = () => {
   const { orders, shopSettings, markOrderCompleted, deleteOrder } = useBakery();
   const CURRENCY = shopSettings?.currency_symbol || "৳";
   const businessName = localStorage.getItem("bb_business_name") || "MY BAKERY";shopSettings?.business_name;
-  const businessEmail = localStorage.getItem("bb_user_email") || "";
+  const businessEmail = localStorage.getItem("supabase.auth.getUser()") || "";
 
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");

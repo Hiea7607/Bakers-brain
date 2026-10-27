@@ -198,7 +198,7 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
 
       localStorage.setItem("bb_auth", "true");
       localStorage.setItem("bb_role", rosterData.role);
-      localStorage.setItem("bb_user_email", email);
+      localStorage.setItem("supabase.auth.getUser()", email);
 
       onLogin(rosterData.role);
 
@@ -303,7 +303,7 @@ function BakersBrainApp({ userRole, onLogout }: { userRole: string; onLogout: ()
   const [showDrawer, setShowDrawer] = useState(false);
 
   const businessName = localStorage.getItem("bb_business_name") || "Business Account";
-  const userEmail = localStorage.getItem("bb_user_email") || "user@bakersbrain.com";
+  const userEmail = localStorage.getItem("supabase.auth.getUser()") || "user@bakersbrain.com";
 
   const { stats = {} as any, products = [], exportMonthlyCSV, exportOrdersCSV, fetchData } = useBakery();
 
