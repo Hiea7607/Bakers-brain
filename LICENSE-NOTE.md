@@ -1,2 +1,1 @@
-# License Note
-Standard commercial license applies.
+# License Note\nStandard commercial license applies.
