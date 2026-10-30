@@ -58,21 +58,3 @@ CREATE TABLE IF NOT EXISTS public.orders (
     delivery_date DATE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
--- ENABLE ROW LEVEL SECURITY (Required for Vibe96 Audit)
-ALTER TABLE public.client_roster ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.shop_settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.ingredients ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.purchases ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.shelf_stock ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.waste_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.deductions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.recipes ENABLE ROW LEVEL SECURITY;
-
--- CREATE TENANT ISOLATION POLICIES
-CREATE POLICY "Users can only access their own settings" ON public.shop_settings FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can only access their own ingredients" ON public.ingredients FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can only access their own products" ON public.products FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can only access their own orders" ON public.orders FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can only access their own purchases" ON public.purchases FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
