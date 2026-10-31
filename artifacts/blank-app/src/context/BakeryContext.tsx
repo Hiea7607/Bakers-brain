@@ -181,7 +181,7 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         supabase.from("ingredients").select("*").eq("user_id", user.id).order("name", { ascending: true }),
         supabase.from("orders").select("*").eq("user_id", user.id).eq("is_deleted", false).order("date", { ascending: false }).limit(INITIAL_ORDER_LIMIT),
         supabase.from("shop_settings").select("*").eq("user_id", user.id).limit(1),
-        supabase.from("client_roster").select("business_name").eq("user_id", user.id).limit(1),
+        supabase.rpc("get_my_account_config"),
         supabase.from("recipes").select("product_code, ingredient_code, quantity").eq("user_id", user.id)
       ]);
 
@@ -190,7 +190,12 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (oRes.data) setOrders(oRes.data as Order[]);
       if (recRes.data) setRecipesList(recRes.data);
 
-      const officialBusinessName = rosterRes.data && rosterRes.data.length > 0 ? rosterRes.data[0].business_name : "Rasel Food Ltd.";
+      if (rosterRes.error) {
+        console.error("Account configuration fetch error:", rosterRes.error);
+      }
+
+      const officialBusinessName =
+        rosterRes.data?.[0]?.business_name || "Business Account";
 
       if (setRes.data && setRes.data.length > 0) {
         setShopSettings({ ...setRes.data[0], business_name: officialBusinessName } as ShopSettings);
@@ -533,7 +538,11 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const remaining = Math.max(0, item.quantity - quantity);
     const lossAmount = item.cost * quantity;
     setShelfStock(prev => prev.map(i => i.id === shelfItemId ? { ...i, quantity: remaining } : i));
-    await supabase.from('shelf_stock').update({ quantity: remaining }).eq('id', shelfItemId);
+    await supabase
+    .from('shelf_stock')
+    .update({ quantity: remaining })
+    .eq('id', shelfItemId)
+    .eq('user_id', user.id);
     const newLog = { id: `WST-${Date.now()}`, date: new Date().toISOString(), product_code: item.product_code, product_name: item.product_name, quantity, total_loss: parseFloat(lossAmount.toFixed(2)), user_id: user.id };
     setWasteLogs(prev => [newLog, ...prev]);
     await supabase.from('waste_logs').insert([newLog]);
@@ -667,7 +676,13 @@ export const BakeryProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
           const newQty = batch.quantity - deductAmount;
           setShelfStock(prev => prev.map(s => s.id === batch.id ? { ...s, quantity: newQty } : s));
-          dbPromises.push(supabase.from('shelf_stock').update({ quantity: newQty }).eq('id', batch.id));
+          dbPromises.push(
+            supabase
+              .from('shelf_stock')
+              .update({ quantity: newQty })
+              .eq('id', batch.id)
+              .eq('user_id', user.id)
+          );
         }
       }
 

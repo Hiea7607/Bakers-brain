@@ -24,29 +24,47 @@ export function AdminPortalView({ onLogout }: { onLogout: () => void }) {
   // NEW: State to prevent the UI from flashing before we verify the admin
   const [isAuthorized, setIsAuthorized] = useState(false);
 
+
   useEffect(() => {
-    // NEW: The Gatekeeper Function
     const verifyAdmin = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      try {
+        // First, verify that someone is logged in.
+        const { data: { user }, error: userError } =
+          await supabase.auth.getUser();
 
-      // If no user is logged in, or they are not the true admin, kick them out instantly
-      if (!user || user.email !== 'curiazy@gmail.com') {
-        onLogout(); 
-        return; 
-      }
+        if (userError || !user) {
+          onLogout();
+          return;
+        }
 
-      // If they pass the check, allow the UI to render and fetch data
-      setIsAuthorized(true);
-      fetchClients();
+        // Ask the database whether this user is an administrator.
+        const { data: isAdmin, error: adminError } =
+          await supabase.rpc("is_admin");
 
-      const savedSession = localStorage.getItem("lastAdminSession");
-      if (savedSession) {
-        setLastAdminSession(JSON.parse(savedSession));
+        // Fail closed if verification fails.
+        if (adminError || isAdmin !== true) {
+          onLogout();
+          return;
+        }
+
+        // Only verified administrators reach this point.
+        setIsAuthorized(true);
+        fetchClients();
+
+        const savedSession = localStorage.getItem("lastAdminSession");
+
+        if (savedSession) {
+          setLastAdminSession(JSON.parse(savedSession));
+        }
+      } catch (error) {
+        console.error("Admin verification failed:", error);
+        onLogout();
       }
     };
 
     verifyAdmin();
-  }, []); // Only run once on mount
+  }, []);
+
 
   const fetchClients = async () => {
     setLoading(true);
@@ -82,18 +100,7 @@ export function AdminPortalView({ onLogout }: { onLogout: () => void }) {
     }
   };
 
-  const toggleLockStatus = async (userId: string, currentStatus: boolean) => {
-    const { error } = await supabase
-      .from("client_roster")
-      .update({ is_locked: !currentStatus })
-      .eq("user_id", userId);
-
-    if (error) {
-      alert("Failed to update status: " + error.message);
-    } else {
-      setClients(clients.map(c => c.user_id === userId ? { ...c, is_locked: !currentStatus } : c));
-    }
-  };
+ 
 
   const filteredClients = clients.filter(c => 
     c.business_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -214,16 +221,15 @@ export function AdminPortalView({ onLogout }: { onLogout: () => void }) {
                       </td>
 
                       <td className="p-4 align-top text-center">
-                        <button
-                          onClick={() => toggleLockStatus(client.user_id, client.is_locked)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                        <span
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
                             client.is_locked
-                              ? "bg-red-100 text-red-700 hover:bg-red-200"
-                              : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-emerald-100 text-emerald-700"
                           }`}
                         >
                           {client.is_locked ? "🔒 Suspended" : "🟢 Active"}
-                        </button>
+                        </span>
                       </td>
                     </tr>
                   );

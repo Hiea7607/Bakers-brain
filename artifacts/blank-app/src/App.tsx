@@ -146,68 +146,89 @@ function LandingGateway({ onLogin }: { onLogin: (role: string) => void }) {
     }
   };
 
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
       if (authError) throw authError;
 
-      const { data: rosterRows, error: rosterError } = await supabase
-        .from('client_roster')
-        .select('role, owner_name, is_locked, expiry_date, business_name')
-        .eq('email', authData.user.email);
+      const { data: rosterData, error: rosterError } =
+        await supabase.rpc("get_my_account_config");
 
-      if (rosterError || !rosterRows || rosterRows.length === 0) {
+      if (rosterError) {
+        console.error("Account configuration error:", rosterError);
+        await supabase.auth.signOut();
+        throw new Error("Unable to verify account configuration.");
+      }
+
+      if (!rosterData || rosterData.length === 0) {
         await supabase.auth.signOut();
         throw new Error("Account configuration not found.");
       }
 
-      const requestedPortal = activeTab.toLowerCase(); 
-      const rosterData = rosterRows.find((row) => row.role === requestedPortal);
+      const account = rosterData[0];
+      const requestedPortal = activeTab.toLowerCase();
 
-      if (!rosterData) {
+      if (account.role !== requestedPortal) {
         await supabase.auth.signOut();
-        throw new Error(`Unauthorized. Please use the correct portal.`);
+        throw new Error("Unauthorized. Please use the correct portal.");
       }
 
-      if (rosterData.role === 'admin') {
-        localStorage.setItem("lastAdminSession", JSON.stringify({
-          name: rosterData.owner_name || "Md Golam Rabbany",
-          date: formatToUniversalDate(new Date())
-        }));
+      if (account.role === "admin") {
+        localStorage.setItem(
+          "lastAdminSession",
+          JSON.stringify({
+            name: account.owner_name || "Admin",
+            date: formatToUniversalDate(new Date()),
+          })
+        );
       }
 
-      if (rosterData.role === 'business') {
-        const isLocked = rosterData.is_locked;
-        const isExpired = rosterData.expiry_date ? new Date(rosterData.expiry_date) < new Date() : false;
-        localStorage.setItem("bb_business_name", rosterData.business_name || "Business Account");
+      if (account.role === "business") {
+        const isLocked = account.is_locked;
+        const isExpired = account.expiry_date
+          ? new Date(account.expiry_date) < new Date()
+          : false;
+
+        localStorage.setItem(
+          "bb_business_name",
+          account.business_name || "Business Account"
+        );
 
         if (isLocked || isExpired) {
-          localStorage.setItem("bb_lockout_reason", isLocked ? "locked" : "expired");
+          localStorage.setItem(
+            "bb_lockout_reason",
+            isLocked ? "locked" : "expired"
+          );
         } else {
           localStorage.removeItem("bb_lockout_reason");
         }
       }
 
       localStorage.setItem("bb_auth", "true");
-      localStorage.setItem("bb_role", rosterData.role);
-      localStorage.setItem("supabase.auth.getUser()", email);
+      localStorage.setItem("bb_role", account.role);
+      localStorage.setItem("supabase.auth.getUser()", authData.user.email || email);
 
-      onLogin(rosterData.role);
+      onLogin(account.role);
 
     } catch (err: any) {
-      setError(err.message || "Failed to sign in. Please check your credentials.");
+      setError(
+        err.message || "Failed to sign in. Please check your credentials."
+      );
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col justify-center items-center p-6 font-sans shadow-2xl">
